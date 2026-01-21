@@ -58,7 +58,7 @@ scripts/rsl_rl/
 Thumbs.db
 
 # Project specific
-*.npz
+# *.npz
 *.csv
 *.png
 *.jpg
