@@ -146,22 +146,50 @@ class HumanoidOperatorEnv(DirectRLEnv):
         )
         self.payload1 = RigidObject(
             RigidObjectCfg(
-                prim_path="/World/envs/env_.*/Robot/payload1",
+                prim_path="/World/envs/env_.*/payload1",
+                spawn=sim_utils.SphereCfg(
+                    radius=0.02,
+                    rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                        kinematic_enabled=True,
+                        disable_gravity=True,
+                    ),
+                ),
             )
         )
         self.payload2 = RigidObject(
             RigidObjectCfg(
-                prim_path="/World/envs/env_.*/Robot/payload2",
+                prim_path="/World/envs/env_.*/payload2",
+                spawn=sim_utils.SphereCfg(
+                    radius=0.02,
+                    rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                        kinematic_enabled=True,
+                        disable_gravity=True,
+                    ),
+                ),
             )
         )
         self.payload3 = RigidObject(
             RigidObjectCfg(
-                prim_path="/World/envs/env_.*/Robot/payload3",
+                prim_path="/World/envs/env_.*/payload3",
+                spawn=sim_utils.SphereCfg(
+                    radius=0.02,
+                    rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                        kinematic_enabled=True,
+                        disable_gravity=True,
+                    ),
+                ),
             )
         )
         self.payload4 = RigidObject(
             RigidObjectCfg(
-                prim_path="/World/envs/env_.*/Robot/payload4",
+                prim_path="/World/envs/env_.*/payload4",
+                spawn=sim_utils.SphereCfg(
+                    radius=0.02,
+                    rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                        kinematic_enabled=True,
+                        disable_gravity=True,
+                    ),
+                ),
             )
         )
         # clone and replicate

@@ -117,6 +117,19 @@ README 只要求：
   - `sensor_dim`
   - `model_history_dim`（如果启用历史）
 
+### 4.1.1 运行期修正（payload 与 URDF）
+为避免 URDF 中缺失 payload prim 导致报错，做了如下修正：
+
+- 机器人配置 `agibot_g1.py`
+  - `UrdfFileCfg` 使用 `asset_path=...`（不是 `urdf_path`）
+  - `asset_path` 指向 `gaponet/source/sim2real_assets/urdfs/agibot_g1/agibot_g1.urdf`
+  - 增加 `joint_drive.gains`（`stiffness=50.0`, `damping=5.0`）
+- 环境 `humanoid_agibot_env.py`
+  - payload prim 放到 `/World/envs/env_.*/payload{1..4}`（不挂在 `Robot/` 下面）
+  - 为 payload 创建小球占位（`SphereCfg`，`radius=0.02`，`kinematic_enabled=True`，`disable_gravity=True`）
+
+说明：这些 payload 仅用于承载质量随机化逻辑；若后续把 payload 写进 URDF，可移除小球占位。
+
 ### 4.2 注册新环境任务
 修改文件：`gaponet/source/sim2real/sim2real/tasks/humanoid_agibot/__init__.py`
 
