@@ -33,7 +33,7 @@ class MotionLoaderMotor:
         if "numpy._core" not in sys.modules:
             sys.modules["numpy._core"] = np.core
         data = np.load(motion_file, allow_pickle=True)
-        print(f"Loading motion data from {motion_file}...")
+        print(f"Loading motion data from {motion_file}...", flush=True)
 
         self.device = device
 
@@ -59,10 +59,15 @@ class MotionLoaderMotor:
 
 
         # type: List[ndarray]
+        print("[MotionLoader] reading arrays...", flush=True)
         self.dof_positions_list = data["real_dof_positions"][self.motion_index:]
+        print("[MotionLoader] real_dof_positions loaded", flush=True)
         self.dof_velocities_list = data["real_dof_velocities"][self.motion_index:]
+        print("[MotionLoader] real_dof_velocities loaded", flush=True)
         self.dof_target_pos_list = data["real_dof_positions_cmd"][self.motion_index:]
+        print("[MotionLoader] real_dof_positions_cmd loaded", flush=True)
         self.dof_torque_list = data["real_dof_torques"][self.motion_index:]
+        print("[MotionLoader] real_dof_torques loaded", flush=True)
         if 'sim_dof_positions' in data:
             self.sim_dof_positions_list = data["sim_dof_positions"][self.motion_index:]
         else:
@@ -72,6 +77,7 @@ class MotionLoaderMotor:
         self.motion_num = len(self.dof_positions_list)
         # Maximum time length of motions
         max_len_timestep = max(len(x) for x in self.dof_positions_list)
+        print(f"[MotionLoader] motions={self.motion_num}, max_len={max_len_timestep}", flush=True)
         
         # List of lengths for each motion
         self.motion_len = []
@@ -107,6 +113,8 @@ class MotionLoaderMotor:
                 self.sim_dof_positions[i, 1:cur_len, :] = sim
                 # self.sim_dof_positions[i, 0, :] = sim[0]
                 # self.sim_dof_positions[i, :cur_len, :] = sim
+            if (i + 1) % 5 == 0 or (i + 1) == self.motion_num:
+                print(f"[MotionLoader] packed {i + 1}/{self.motion_num}", flush=True)
 
         # Move tensors to target device once to avoid repeated GPU transfers
         if str(self.device) != "cpu":
