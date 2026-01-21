@@ -79,7 +79,7 @@ def main() -> int:
         "--dataset",
         type=str,
         required=True,
-        help="Dataset root, e.g. agibot/data/H3_example",
+        help="Dataset root, e.g. /home/user/agibot/data/H3_example",
     )
     parser.add_argument(
         "--episodes",

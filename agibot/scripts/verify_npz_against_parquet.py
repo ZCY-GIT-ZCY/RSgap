@@ -139,8 +139,8 @@ def compare_episode(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify .npz against parquet dataset")
-    parser.add_argument("--dataset", type=str, required=True, help="Dataset root, e.g. agibot/data/H3_example")
-    parser.add_argument("--npz", type=str, required=True, help="Path to motion_agibot.npz")
+    parser.add_argument("--dataset", type=str, required=True, help="Dataset root, e.g. /home/user/agibot/data/H3_example")
+    parser.add_argument("--npz", type=str, required=True, help="Path to motion_agibot.npz, e.g. /home/user/agibot/data/H3_example/motion_agibot.npz")
     parser.add_argument("--episodes", type=str, default="all", help="Episode indices used to build the npz")
     parser.add_argument("--atol", type=float, default=1e-6, help="Absolute tolerance for numeric compare")
     args = parser.parse_args()
