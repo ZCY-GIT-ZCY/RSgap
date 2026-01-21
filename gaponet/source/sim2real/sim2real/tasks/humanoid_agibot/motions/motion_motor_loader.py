@@ -79,21 +79,22 @@ class MotionLoaderMotor:
             self.motion_len.append(self.dof_positions_list[i].shape[0])
         self.motion_len = torch.tensor(self.motion_len, dtype=torch.long, device=self.device)
             
-        # Expand all motions to the same length and form a large tensor
-        self.dof_positions = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=self.device)
-        self.dof_velocities = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=self.device)
-        self.dof_target_pos = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=self.device)
-        self.dof_torque = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=self.device)
+        # Expand all motions to the same length and form a large tensor (build on CPU first)
+        cpu_device = torch.device("cpu")
+        self.dof_positions = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=cpu_device)
+        self.dof_velocities = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=cpu_device)
+        self.dof_target_pos = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=cpu_device)
+        self.dof_torque = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=cpu_device)
         if self.sim_dof_positions_list is not None:
-            self.sim_dof_positions = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=self.device)
+            self.sim_dof_positions = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=cpu_device)
         else:
             self.sim_dof_positions = None
 
         for i in range(self.motion_num):
-            pos = torch.as_tensor(self.dof_positions_list[i], dtype=torch.float32, device=self.device)
-            vel = torch.as_tensor(self.dof_velocities_list[i], dtype=torch.float32, device=self.device)
-            tgt = torch.as_tensor(self.dof_target_pos_list[i], dtype=torch.float32, device=self.device)
-            tq = torch.as_tensor(self.dof_torque_list[i], dtype=torch.float32, device=self.device)
+            pos = torch.as_tensor(self.dof_positions_list[i], dtype=torch.float32, device=cpu_device)
+            vel = torch.as_tensor(self.dof_velocities_list[i], dtype=torch.float32, device=cpu_device)
+            tgt = torch.as_tensor(self.dof_target_pos_list[i], dtype=torch.float32, device=cpu_device)
+            tq = torch.as_tensor(self.dof_torque_list[i], dtype=torch.float32, device=cpu_device)
 
             cur_len = pos.shape[0]
             # import pdb; pdb.set_trace()
@@ -102,10 +103,19 @@ class MotionLoaderMotor:
             self.dof_target_pos[i, :cur_len, :] = tgt
             self.dof_torque[i, :cur_len, :] = tq   
             if self.sim_dof_positions is not None and self.sim_dof_positions_list is not None:
-                sim = torch.from_numpy(self.sim_dof_positions_list[i].astype(np.float32)).float().to(self.device)
+                sim = torch.from_numpy(self.sim_dof_positions_list[i].astype(np.float32)).float()
                 self.sim_dof_positions[i, 1:cur_len, :] = sim
                 # self.sim_dof_positions[i, 0, :] = sim[0]
                 # self.sim_dof_positions[i, :cur_len, :] = sim
+
+        # Move tensors to target device once to avoid repeated GPU transfers
+        if str(self.device) != "cpu":
+            self.dof_positions = self.dof_positions.to(self.device)
+            self.dof_velocities = self.dof_velocities.to(self.device)
+            self.dof_target_pos = self.dof_target_pos.to(self.device)
+            self.dof_torque = self.dof_torque.to(self.device)
+            if self.sim_dof_positions is not None:
+                self.sim_dof_positions = self.sim_dof_positions.to(self.device)
         
 
         self.joint_sequence = data["joint_sequence"]
