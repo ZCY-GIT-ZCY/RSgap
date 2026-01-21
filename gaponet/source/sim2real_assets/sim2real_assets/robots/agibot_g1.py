@@ -13,6 +13,12 @@ AGIBOT_G1_CFG = ArticulationCfg(
         asset_path=AGIBOT_G1_URDF_PATH,
         activate_contact_sensors=True,
         fix_base=True,
+        joint_drive=sim_utils.UrdfConverterCfg.JointDriveCfg(
+            gains=sim_utils.UrdfConverterCfg.JointDriveCfg.PDGainsCfg(
+                stiffness=50.0,
+                damping=5.0,
+            )
+        ),
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
             retain_accelerations=False,
