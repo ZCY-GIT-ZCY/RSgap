@@ -10,7 +10,7 @@ AGIBOT_G1_URDF_PATH = os.path.join(assets_dir, "urdfs/agibot_g1/agibot_g1.urdf")
 
 AGIBOT_G1_CFG = ArticulationCfg(
     spawn=sim_utils.UrdfFileCfg(
-        urdf_path=AGIBOT_G1_URDF_PATH,
+        asset_path=AGIBOT_G1_URDF_PATH,
         activate_contact_sensors=True,
         fix_base=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
