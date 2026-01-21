@@ -37,16 +37,16 @@ AGIBOT_G1_CFG = ArticulationCfg(
     init_state=ArticulationCfg.InitialStateCfg(
         pos=(0.0, 0.0, 0.0),
         joint_pos={
-            ".*_joint": 0.0,
+            ".*_joint.*": 0.0,
         },
         joint_vel={
-            ".*_joint": 0.0,
+            ".*_joint.*": 0.0,
         },
     ),
     soft_joint_pos_limit_factor=0.9,
     actuators={
         "all": ImplicitActuatorCfg(
-            joint_names_expr=[".*_joint"],
+            joint_names_expr=[".*_joint.*"],
             effort_limit_sim=100.0,
             velocity_limit_sim=50.0,
             stiffness=50.0,

@@ -27,6 +27,11 @@ class MotionLoaderMotor:
             AssertionError: If the specified motion file doesn't exist.
         """
         assert os.path.isfile(motion_file), f"Invalid file path: {motion_file}"
+        # Compatibility shim: some motion npz files were pickled with numpy 2.x
+        # which references "numpy._core" during unpickle. Alias it to numpy.core.
+        import sys
+        if "numpy._core" not in sys.modules:
+            sys.modules["numpy._core"] = np.core
         data = np.load(motion_file, allow_pickle=True)
         print(f"Loading motion data from {motion_file}...")
 
