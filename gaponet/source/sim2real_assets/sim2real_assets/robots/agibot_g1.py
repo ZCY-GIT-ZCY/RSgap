@@ -4,7 +4,7 @@ import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 
-assets_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+assets_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 AGIBOT_G1_URDF_PATH = os.path.join(assets_dir, "urdfs/agibot_g1/agibot_g1.urdf")
 
