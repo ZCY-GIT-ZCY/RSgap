@@ -1,0 +1,104 @@
+# ============================================================================
+# AGIBOT G1 回放仿真配置文件
+# ============================================================================
+# 
+# 本配置文件用于控制 replay_action.py 的行为
+# 包括数据源、仿真参数、执行器增益、可视化选项等
+#
+# 使用方法:
+#   python replay_action.py --config configs/replay_config.yaml --episode 0
+#
+# ============================================================================
+
+# 数据集配置
+dataset:
+  path: "/home/jianing/Desktop/yuntian/agibot/data/H3_example"
+  episode_index: 0                    # 要回放的 episode 编号，支持 "all" 或整数
+  
+# 机器人 URDF 配置
+robot:
+  urdf_path: "/home/jianing/Desktop/yuntian/agibot/assets/G1_omnipicker/urdf/G1_omnipicker_fixed.urdf"
+  fix_base: true                      # 固定底座 (该机器人无移动底盘)
+
+# 仿真频率配置
+# ============
+# 重要: 控制频率应与源数据 FPS 一致 (30Hz)
+# decimation = control_dt / physics_dt = 2 (60Hz 物理, 30Hz 控制)
+simulation:
+  physics_dt: 0.01666667              # 物理步长 = 1/60 Hz
+  control_dt: 0.03333333              # 控制步长 = 1/30 Hz (与源数据一致)
+
+# 执行器 (Implicit Actuator) 增益配置
+# ====================================
+# Implicit Actuator 模型: τ = Kp * (q_target - q) - Kd * q_dot
+# 
+# 调参建议:
+# - 增大 Kp: 响应更快，但可能导致振荡
+# - 增大 Kd: 阻尼更大，运动更平滑但可能变慢
+# - 真机匹配: 需要根据真机的 PD 控制器参数调整
+# 执行器增益配置 - 分离移动关节和旋转关节
+actuators:
+  head:
+    stiffness: 100.0
+    damping: 10.0
+    
+  arms:
+    stiffness: 400.0                  # 增加手臂刚度
+    damping: 40.0
+    
+  grippers:
+    stiffness: 20.0
+    damping: 2.0
+
+# 夹爪值域转换
+# ============
+# 真机数据: [0, 120], 0=张开, 120=闭合
+# URDF 定义: [0, 0.785], 0=闭合, 0.785=张开
+# 转换公式: urdf = urdf_max * (1 - state / state_max)
+gripper:
+  state_max: 120.0                    # 真机数据最大值 (闭合)
+  urdf_max: 0.785                     # URDF 关节最大值 (张开, ~45度)
+
+# 回放控制
+playback:
+  speed: 1.0                          # 回放速度倍数 (暂不支持变速)
+  loop: false                         # 是否循环播放
+  start_frame: 0                      # 起始帧 (0-based)
+  end_frame: -1                       # 结束帧 (-1 表示到末尾)
+
+# 数据记录
+recording:
+  enabled: true                       # 是否记录仿真数据
+  output_dir: "outputs/replay_results"
+  save_pkl: true                      # 保存 pickle 文件 (包含完整对齐数据)
+  save_csv: false                     # 保存 CSV 文件 (暂未实现)
+
+# 可视化配置
+visualization:
+  enabled: true                       # 是否生成对比图
+  output_dir: "outputs/plots"
+  format: "png"                       # 图片格式: png, pdf, svg
+  dpi: 150                            # 图片分辨率
+  use_degrees: true                   # 角度使用度数显示 (否则弧度)
+  
+  # 要绘制的关节组
+  # 注意: 腰部关节已在URDF中固定，不再包含在数据中
+  plot_groups:
+    - "head"                          # 头部 (2 关节)
+    - "arm_l"                         # 左臂 (7 关节)
+    - "arm_r"                         # 右臂 (7 关节)
+
+  # 或指定单独关节索引 (覆盖 plot_groups)
+  # 16维关节: 0-1: 头部, 2-8: 左臂, 9-15: 右臂
+  # plot_joints: [0, 1, 2, 3, 4, 9, 10, 11]
+
+# Isaac Lab 配置
+isaac_lab:
+  headless: false                     # 无头模式 (不显示窗口)
+  enable_cameras: false               # 启用相机 (暂不使用)
+  
+# 调试选项
+debug:
+  verbose: true                       # 详细输出
+  print_mapping: true                 # 打印关节映射详情
+  print_every_n_frames: 100           # 每 N 帧打印进度

@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tree:*)",
+      "Bash(conda env:*)",
+      "Bash(ls:*)",
+      "Bash(python -m py_compile:*)"
+    ],
+    "deny": [
+      "Bash(rm:*)",
+      "Read(./data/H3_example/data/**)",
+      "Read(./data/H3_example/videos/**)",
+      "Read(./outputs/**)",
+      "Read(./assets/G1_omnipicker/meshes/**)",
+      "Read(./plot_gripper_diff.py)",
+      "Read(./test_joint_limits.py)",
+      "Read(./validate_action_state_alignment.py)",
+      "Read(./output_gripper_diff/**)"
+    ]
+  }
+}
