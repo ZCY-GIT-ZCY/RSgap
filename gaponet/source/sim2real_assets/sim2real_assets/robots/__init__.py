@@ -10,4 +10,5 @@
 from .unitree import *
 from .unitree_h1_2 import *
 from .fourior import *
+from .agibot_g1 import *
 

@@ -79,7 +79,7 @@ ROBOT_JOINT_NAME_DICT_URDF = {
         'left_wrist_pitch_joint', 'left_wrist_yaw_joint', 'right_shoulder_pitch_joint', 
         'right_shoulder_roll_joint', 'right_shoulder_yaw_joint', 'right_elbow_joint', 
         'right_wrist_roll_joint', 'right_wrist_pitch_joint', 'right_wrist_yaw_joint'
-    ]
+    ],
 }
 
 ROBOT_JOINT_NAME_DICT_URDF_FOURIOR = {

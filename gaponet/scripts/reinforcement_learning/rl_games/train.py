@@ -51,6 +51,7 @@ import random
 from datetime import datetime
 
 import sim2real.tasks.humanoid_operator
+import sim2real.tasks.humanoid_agibot
 from rl_games.common import env_configurations, vecenv
 from rl_games.common.algo_observer import IsaacAlgoObserver
 from rl_games.torch_runner import Runner

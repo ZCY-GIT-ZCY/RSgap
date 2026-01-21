@@ -50,6 +50,7 @@ import torch
 from datetime import datetime
 
 import sim2real.tasks.humanoid_operator
+import sim2real.tasks.humanoid_agibot
 from rsl_rl.runners import OnPolicyRunner
 
 from isaaclab.envs import (
