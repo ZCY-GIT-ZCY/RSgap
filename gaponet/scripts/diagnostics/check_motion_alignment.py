@@ -18,6 +18,9 @@ from pathlib import Path
 import types
 
 from isaaclab.app import AppLauncher
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 
 def main() -> int:
@@ -37,6 +40,14 @@ def main() -> int:
         "--sync-to-motion",
         action="store_true",
         help="Before rollout, set robot joint states to motion real positions at the start frame.",
+    )
+    parser.add_argument("--plot", action="store_true", help="Save plots for top error joints.")
+    parser.add_argument("--plot-topk", type=int, default=5, help="Top-K joints to plot.")
+    parser.add_argument(
+        "--plot-dir",
+        type=str,
+        default="logs/diagnostics",
+        help="Directory to save plots.",
     )
     # AppLauncher args (e.g., --headless, --device)
     AppLauncher.add_app_launcher_args(parser)
@@ -105,6 +116,8 @@ def main() -> int:
 
     joint_err_means = []
     joint_err_maxs = []
+    sim_traj = []
+    real_traj = []
 
     per_joint_max = []
     for step in range(args.num_steps):
@@ -117,6 +130,13 @@ def main() -> int:
             joint_err_means.append(float(np.mean(joint_pos_diff)))
             joint_err_maxs.append(float(np.max(joint_pos_diff)))
             per_joint_max.append(np.max(joint_pos_diff, axis=0))
+            # Collect trajectories for env 0.
+            sim_pos = env_unwrapped.robot.data.joint_pos[:, env_unwrapped.motion_joint_ids].detach().cpu().numpy()
+            real_pos = env_unwrapped._motion_loader.dof_positions[
+                env_unwrapped.motion_indices, env_unwrapped.time_indices
+            ].detach().cpu().numpy()
+            sim_traj.append(sim_pos[0])
+            real_traj.append(real_pos[0])
 
         # advance time indices for the next step (mirror env internal logic)
         time_indices = time_indices + 1
@@ -134,6 +154,26 @@ def main() -> int:
         print("  top max-error joints (deg):")
         for idx in top_idx:
             print(f"    {dof_names[idx]}: {per_joint_max[idx]:.4f}")
+            if args.plot and sim_traj:
+                plot_dir = Path(args.plot_dir)
+                plot_dir.mkdir(parents=True, exist_ok=True)
+                sim_arr = np.stack(sim_traj, axis=0)
+                real_arr = np.stack(real_traj, axis=0)
+                top_idx = np.argsort(-per_joint_max)[: args.plot_topk]
+                steps = np.arange(sim_arr.shape[0])
+                for idx in top_idx:
+                    plt.figure(figsize=(8, 3))
+                    plt.plot(steps, sim_arr[:, idx], label="sim")
+                    plt.plot(steps, real_arr[:, idx], label="real")
+                    plt.title(f"{dof_names[idx]} (rad)")
+                    plt.xlabel("step")
+                    plt.ylabel("position")
+                    plt.legend()
+                    out_path = plot_dir / f"{dof_names[idx]}_traj.png"
+                    plt.tight_layout()
+                    plt.savefig(out_path)
+                    plt.close()
+                print(f"  plots saved to: {plot_dir}")
     else:
         print("  no stats collected (all steps were warmup)")
 
