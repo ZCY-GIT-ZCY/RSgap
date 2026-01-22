@@ -61,10 +61,12 @@ def main() -> int:
     env_cfg_path = Path(__file__).resolve().parents[2] / "source" / "sim2real" / "sim2real" / "tasks" / "humanoid_agibot" / "humanoid_agibot_env_cfg.py"
     if not env_cfg_path.is_file():
         raise RuntimeError(f"Env cfg module not found: {env_cfg_path}")
-    env_cfg_spec = importlib.util.spec_from_file_location("sim2real.tasks.humanoid_agibot.humanoid_agibot_env_cfg", env_cfg_path)
+    env_cfg_mod_name = "sim2real.tasks.humanoid_agibot.humanoid_agibot_env_cfg"
+    env_cfg_spec = importlib.util.spec_from_file_location(env_cfg_mod_name, env_cfg_path)
     if env_cfg_spec is None or env_cfg_spec.loader is None:
         raise RuntimeError(f"Failed to load env cfg module: {env_cfg_path}")
     env_cfg_module = importlib.util.module_from_spec(env_cfg_spec)
+    sys.modules[env_cfg_mod_name] = env_cfg_module
     env_cfg_spec.loader.exec_module(env_cfg_module)
     env_cfg = env_cfg_module.HumanoidOperatorEnvCfg()
     env_cfg.scene.num_envs = args.num_envs
