@@ -156,6 +156,10 @@ README 只要求：
 - `humanoid_agibot_env.py` 中 `policy` 观测改为 `branch+trunk` 拼接后的 **单一张量**
 - 同时保留 `model` 与 `operator` 字段用于调试/记录
 
+### 4.1.5 运行期修正（DeepONet 类注册）
+为解决 `DeepONetActorCritic` 在 rsl-rl 里 `eval()` 找不到的问题：
+- `humanoid_agibot/agents/rsl_rl_operator_cfg.py` 增加 `from sim2real.rsl_rl.modules import DeepONetActorCritic`
+
 ### 4.2 注册新环境任务
 修改文件：`gaponet/source/sim2real/sim2real/tasks/humanoid_agibot/__init__.py`
 

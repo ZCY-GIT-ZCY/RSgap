@@ -6,6 +6,7 @@
 from isaaclab.utils import configclass
 from typing import Literal, List
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
+from sim2real.rsl_rl.modules import DeepONetActorCritic
 
 @configclass
 class DeepONetActorCriticCfg:
