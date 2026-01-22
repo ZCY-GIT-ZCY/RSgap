@@ -32,7 +32,6 @@ def main() -> int:
     parser.add_argument("--num-steps", type=int, default=200, help="Number of steps to run.")
     parser.add_argument("--motion-index", type=int, default=0, help="Fixed motion index to use.")
     parser.add_argument("--time-index", type=int, default=0, help="Fixed start time index to use.")
-    parser.add_argument("--device", type=str, default="cuda:0", help="Simulation device.")
     # AppLauncher args (e.g., --headless, --device)
     AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
