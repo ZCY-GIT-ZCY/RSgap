@@ -12,6 +12,8 @@ import os
 import gymnasium as gym
 import numpy as np
 import torch
+import importlib.util
+from pathlib import Path
 
 
 def main() -> int:
@@ -29,8 +31,13 @@ def main() -> int:
     parser.add_argument("--device", type=str, default="cuda:0", help="Simulation device.")
     args = parser.parse_args()
 
-    # Ensure task registration.
-    import sim2real.tasks.humanoid_agibot  # noqa: F401
+    # Ensure task registration without importing sim2real.__init__ (avoids omni.ext).
+    tasks_init = Path(__file__).resolve().parents[2] / "source" / "sim2real" / "sim2real" / "tasks" / "humanoid_agibot" / "__init__.py"
+    spec = importlib.util.spec_from_file_location("sim2real.tasks.humanoid_agibot", tasks_init)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Failed to load task module: {tasks_init}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
 
     # Build env config overrides.
     env = gym.make(
