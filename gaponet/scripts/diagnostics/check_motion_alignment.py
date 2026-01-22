@@ -17,6 +17,8 @@ import importlib.util
 from pathlib import Path
 import types
 
+from isaaclab.app import AppLauncher
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check motion alignment for humanoid_agibot")
@@ -31,7 +33,13 @@ def main() -> int:
     parser.add_argument("--motion-index", type=int, default=0, help="Fixed motion index to use.")
     parser.add_argument("--time-index", type=int, default=0, help="Fixed start time index to use.")
     parser.add_argument("--device", type=str, default="cuda:0", help="Simulation device.")
+    # AppLauncher args (e.g., --headless, --device)
+    AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
+
+    # Launch Isaac Sim (required for carb/omni dependencies).
+    app_launcher = AppLauncher(args)
+    simulation_app = app_launcher.app
 
     # Ensure task registration without importing sim2real.__init__ (avoids omni.ext).
     tasks_init = Path(__file__).resolve().parents[2] / "source" / "sim2real" / "sim2real" / "tasks" / "humanoid_agibot" / "__init__.py"
@@ -93,6 +101,7 @@ def main() -> int:
     print(f"  max joint error (deg): {np.max(joint_err_maxs):.4f}")
 
     env.close()
+    simulation_app.close()
     return 0
 
 
