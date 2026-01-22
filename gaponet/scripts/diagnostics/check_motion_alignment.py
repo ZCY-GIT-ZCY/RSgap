@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 
 import gymnasium as gym
 import numpy as np
 import torch
 import importlib.util
 from pathlib import Path
+import types
 
 
 def main() -> int:
@@ -33,10 +35,18 @@ def main() -> int:
 
     # Ensure task registration without importing sim2real.__init__ (avoids omni.ext).
     tasks_init = Path(__file__).resolve().parents[2] / "source" / "sim2real" / "sim2real" / "tasks" / "humanoid_agibot" / "__init__.py"
+    if not tasks_init.is_file():
+        raise RuntimeError(f"Task module not found: {tasks_init}")
+    # Create lightweight parent packages to bypass sim2real/__init__.py.
+    if "sim2real" not in sys.modules:
+        sys.modules["sim2real"] = types.ModuleType("sim2real")
+    if "sim2real.tasks" not in sys.modules:
+        sys.modules["sim2real.tasks"] = types.ModuleType("sim2real.tasks")
     spec = importlib.util.spec_from_file_location("sim2real.tasks.humanoid_agibot", tasks_init)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Failed to load task module: {tasks_init}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules["sim2real.tasks.humanoid_agibot"] = module
     spec.loader.exec_module(module)
 
     # Build env config overrides.
