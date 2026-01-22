@@ -151,6 +151,11 @@ README 只要求：
 - `humanoid_agibot_env.py` 中新增 motion→robot 关节索引映射
 - 所有写入/读取机器人关节状态与 target 的操作使用该映射（`joint_ids`）
 
+### 4.1.4 运行期修正（policy 观测格式）
+为兼容 RSL-RL runner（要求 `obs` 为 tensor 而非 dict）：
+- `humanoid_agibot_env.py` 中 `policy` 观测改为 `branch+trunk` 拼接后的 **单一张量**
+- 同时保留 `model` 与 `operator` 字段用于调试/记录
+
 ### 4.2 注册新环境任务
 修改文件：`gaponet/source/sim2real/sim2real/tasks/humanoid_agibot/__init__.py`
 

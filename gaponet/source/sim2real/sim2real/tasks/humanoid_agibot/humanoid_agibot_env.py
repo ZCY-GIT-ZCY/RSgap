@@ -425,15 +425,14 @@ class HumanoidOperatorEnv(DirectRLEnv):
         return torch.tensor(tau[:, self.joint_urdf_to_joint_usd], device=self.device)  # Return corresponding joint torques
     
     def _get_observations(self) -> Dict[str, torch.Tensor | Dict[str, torch.Tensor]]:
-        output = {
-            "model": self.compute_model_observation(),
-            "operator": self.compute_operator_observation(),
-        }
-        
+        model_obs = self.compute_model_observation()
+        operator_obs = self.compute_operator_observation()
+        # Policy expects flattened (branch + trunk) tensor for DeepONet actor.
+        policy_obs = torch.cat([operator_obs["branch"], operator_obs["trunk"]], dim=1)
         return {
-            "model": self.compute_model_observation(),
-            "operator": self.compute_operator_observation(),
-            "policy": output,
+            "model": model_obs,
+            "operator": operator_obs,
+            "policy": policy_obs,
         }
 
     def _get_rewards(self) -> torch.Tensor:
