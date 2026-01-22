@@ -146,6 +146,11 @@ README 只要求：
   - 读取 `joint_sequence` / `joint_names` 时强制转为 `dtype=str`
   - `wrist_index` 在无腕关节时返回空张量，避免硬编码腕关节报错
 
+### 4.1.3 运行期修正（运动关节映射）
+为解决机器人关节数（34）与 motion DOF（16）不一致导致的 shape mismatch：
+- `humanoid_agibot_env.py` 中新增 motion→robot 关节索引映射
+- 所有写入/读取机器人关节状态与 target 的操作使用该映射（`joint_ids`）
+
 ### 4.2 注册新环境任务
 修改文件：`gaponet/source/sim2real/sim2real/tasks/humanoid_agibot/__init__.py`
 

@@ -55,6 +55,16 @@ class HumanoidOperatorEnv(DirectRLEnv):
         self._motion_loader = MotionLoaderMotor(motion_file=self.cfg.train_motion_file if self.mode == "train" else self.cfg.test_motion_file, device=self.device, mode=self.mode, robot_name=self.cfg.robot_name)  # type: ignore
         self.num_dofs = self._motion_loader.num_dofs
 
+        # Map motion DOFs to robot joint indices (robot has more joints than motion DOFs)
+        self.motion_joint_ids = [self.robot.data.joint_names.index(name) for name in self._motion_loader.dof_names]
+        self.motion_joint_ids_tensor = torch.tensor(self.motion_joint_ids, dtype=torch.long, device=self.device)
+        motion_wo_wrist = self._motion_loader.joint_sequence_wo_wrist.tolist()
+        self.motion_joint_ids_wo_wrist = torch.tensor(
+            [self.motion_joint_ids[i] for i in motion_wo_wrist],
+            dtype=torch.long,
+            device=self.device,
+        )
+
         self.ref_body_index = self.robot.data.body_names.index(self.cfg.reference_body)
 
         # Initialize motion and time indices for environments
@@ -80,7 +90,7 @@ class HumanoidOperatorEnv(DirectRLEnv):
 
         self.robot_mass = self.robot.data.default_mass.to(device=self.device)
 
-        self.delta_action_joint_indices = self._motion_loader.joint_sequence_index
+        self.delta_action_joint_indices = self.motion_joint_ids_tensor
 
         self.add_model_history = self.cfg.add_model_history
         self.model_history = torch.zeros((self.num_envs, self.cfg.model_history_length, self.cfg.model_history_dim), device=self.device)
@@ -222,7 +232,11 @@ class HumanoidOperatorEnv(DirectRLEnv):
             self._motion_loader = MotionLoaderMotor(motion_file=self.cfg.train_motion_file if self.mode == "train" else self.cfg.test_motion_file, device=self.device, mode=self.mode, robot_name=self.cfg.robot_name)  # type: ignore
 
         self.motion_indices[:], self.time_indices[:] = self._motion_loader.sample_indices(self.num_envs)
-        self.robot.write_joint_state_to_sim(self._motion_loader.dof_positions[self.motion_indices, self.time_indices], self._motion_loader.dof_velocities[self.motion_indices, self.time_indices])
+        self.robot.write_joint_state_to_sim(
+            self._motion_loader.dof_positions[self.motion_indices, self.time_indices],
+            self._motion_loader.dof_velocities[self.motion_indices, self.time_indices],
+            joint_ids=self.motion_joint_ids,
+        )
         
         if self._motion_loader.hand_marker is not None:
             self.hand_payload_mass[:] = 0.001
@@ -251,7 +265,7 @@ class HumanoidOperatorEnv(DirectRLEnv):
         dof_target_pos = self._motion_loader.dof_target_pos[self.motion_indices, self.time_indices]
 
         self.apply_action = (dof_target_pos + delta_action).clone()
-        self.robot.set_joint_position_target(self.apply_action)
+        self.robot.set_joint_position_target(self.apply_action, joint_ids=self.motion_joint_ids)
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         time_out = self.episode_length_buf >= self.max_episode_length
@@ -273,10 +287,11 @@ class HumanoidOperatorEnv(DirectRLEnv):
                     })
                     continue
                 self.play_data[i].append({
-                    "delta_joint_pos": self.robot.data.joint_pos[i:i+1, self._motion_loader.joint_sequence_index].clone().cpu().numpy(),
+                    "delta_joint_pos": self.robot.data.joint_pos[i:i+1, self.motion_joint_ids].clone().cpu().numpy(),
                     "real_joint_pos": self._motion_loader.dof_positions[self.motion_indices[i:i+1], self.time_indices[i:i+1]][:, self._motion_loader.joint_sequence_index].clone().cpu().numpy(),
                     "joint_target_pos": self._motion_loader.dof_target_pos[self.motion_indices[i:i+1], self.time_indices[i:i+1]][:, self._motion_loader.joint_sequence_index].clone().cpu().numpy(),
-                    "joint_pos_diff": self.robot.data.joint_pos[i:i+1, self._motion_loader.joint_sequence_wo_wrist].clone().cpu().numpy() - self._motion_loader.dof_positions[self.motion_indices[i:i+1], self.time_indices[i:i+1]][:, self._motion_loader.joint_sequence_wo_wrist].clone().cpu().numpy(),
+                    "joint_pos_diff": self.robot.data.joint_pos[i:i+1, self.motion_joint_ids_wo_wrist].clone().cpu().numpy()
+                        - self._motion_loader.dof_positions[self.motion_indices[i:i+1], self.time_indices[i:i+1]][:, self._motion_loader.joint_sequence_wo_wrist].clone().cpu().numpy(),
                     "payload_mass": self._motion_loader.payload_sequence[self.motion_indices[i:i+1]].clone().cpu().item(),
                     "hand_marker": self._motion_loader.hand_marker[self.motion_indices[i:i+1]].clone().cpu().item() if self._motion_loader.hand_marker is not None else None,
                     
@@ -374,7 +389,12 @@ class HumanoidOperatorEnv(DirectRLEnv):
         self.robot.reset(env_ids)  # type: ignore
         super()._reset_idx(env_ids) # type: ignore
 
-        self.robot.write_joint_state_to_sim(self._motion_loader.dof_positions[motion_indices, time_indices], self._motion_loader.dof_velocities[motion_indices, time_indices], None, env_ids)   # type: ignore shape: (10,)
+        self.robot.write_joint_state_to_sim(
+            self._motion_loader.dof_positions[motion_indices, time_indices],
+            self._motion_loader.dof_velocities[motion_indices, time_indices],
+            joint_ids=self.motion_joint_ids,
+            env_ids=env_ids,
+        )   # type: ignore
         if self._motion_loader.hand_marker is not None:
             self.hand_payload_mass[env_ids] = 0.001
             self.wrist_payload_mass[env_ids] = 0.001
@@ -785,7 +805,12 @@ class HumanoidOperatorEnv(DirectRLEnv):
 
         joint_pos = self._motion_loader.dof_positions[self.motion_indices, self.time_indices]
         joint_vel = self._motion_loader.dof_velocities[self.motion_indices, self.time_indices]
-        self.robot.write_joint_state_to_sim(joint_pos[env_ids], joint_vel[env_ids], env_ids=env_ids) # type: ignore
+        self.robot.write_joint_state_to_sim(
+            joint_pos[env_ids],
+            joint_vel[env_ids],
+            joint_ids=self.motion_joint_ids,
+            env_ids=env_ids,
+        ) # type: ignore
 
         if self._motion_loader.hand_marker is None:
             self.hand_payload_mass[env_ids] = 0.001
@@ -828,16 +853,16 @@ class HumanoidOperatorEnv(DirectRLEnv):
         # self.step_velocity[:] = (self.after_positions - self.before_positions) / self.step_dt
 
     def _pre_set_sensor_data(self):
-        joint_pos = self.robot.data.joint_pos[:, self._motion_loader.joint_sequence_index]
-        joint_vel = self.robot.data.joint_vel[:, self._motion_loader.joint_sequence_index]
+        joint_pos = self.robot.data.joint_pos[:, self.motion_joint_ids]
+        joint_vel = self.robot.data.joint_vel[:, self.motion_joint_ids]
         self.pre_sub_env_joint_states = torch.cat([
                 joint_pos,
                 joint_vel * self.step_dt,
         ], dim=1).view(self.num_sub_environments, self.num_sensor_positions, self.cfg.sensor_dim)
 
     def _set_sensor_data(self):
-        joint_pos = self.robot.data.joint_pos[:, self._motion_loader.joint_sequence_index]
-        joint_vel = self.robot.data.joint_vel[:, self._motion_loader.joint_sequence_index]
+        joint_pos = self.robot.data.joint_pos[:, self.motion_joint_ids]
+        joint_vel = self.robot.data.joint_vel[:, self.motion_joint_ids]
 
         self.sub_env_sensor_data[:] = torch.cat([
                 joint_pos,
@@ -866,9 +891,9 @@ class HumanoidOperatorEnv(DirectRLEnv):
         critic_obs = torch.cat([
             self.sensor_data.flatten(1, 2),
             current_action,
-            self.robot.data.joint_pos[:, self._motion_loader.joint_sequence_index],
-            self.robot.data.joint_vel[:, self._motion_loader.joint_sequence_index],
-            self.robot.data.joint_acc[:, self._motion_loader.joint_sequence_index],
+            self.robot.data.joint_pos[:, self.motion_joint_ids],
+            self.robot.data.joint_vel[:, self.motion_joint_ids],
+            self.robot.data.joint_acc[:, self.motion_joint_ids],
             real_joint_pos,
             real_joint_vel,
             self.wrist_payload_mass,
@@ -896,7 +921,7 @@ class HumanoidOperatorEnv(DirectRLEnv):
 
         self.apply_action[:] = self._motion_loader.dof_target_pos[self.motion_indices, self.time_indices]
         self.apply_action[:, self._motion_loader.joint_sequence_index] += self.delta_action
-        self.robot.set_joint_position_target(self.apply_action)
+        self.robot.set_joint_position_target(self.apply_action, joint_ids=self.motion_joint_ids)
 
         self._raw_step_simulator()
         # # update time_indices
@@ -911,15 +936,21 @@ class HumanoidOperatorEnv(DirectRLEnv):
 
         self.last_delta_action[:] = self.delta_action
         return None, rewards, dones, {'episode': {
-            'joint_pos_diff': torch.abs((self._motion_loader.dof_positions[self.motion_indices, self.time_indices] - self.robot.data.joint_pos)[:, self._motion_loader.joint_sequence_index]) * (360 / 6.28),
-            'joint_vel_diff': torch.abs((self._motion_loader.dof_velocities[self.motion_indices, self.time_indices] - self.robot.data.joint_vel)[:, self._motion_loader.joint_sequence_index]) * (360 / 6.28),
+            'joint_pos_diff': torch.abs(
+                self._motion_loader.dof_positions[self.motion_indices, self.time_indices]
+                - self.robot.data.joint_pos[:, self.motion_joint_ids]
+            ) * (360 / 6.28),
+            'joint_vel_diff': torch.abs(
+                self._motion_loader.dof_velocities[self.motion_indices, self.time_indices]
+                - self.robot.data.joint_vel[:, self.motion_joint_ids]
+            ) * (360 / 6.28),
         }}
 
 
     def compute_model_observation(self, add_noise: bool = False) -> torch.Tensor:
-        joint_pos = self.robot.data.joint_pos[:, self._motion_loader.joint_sequence_index]
-        joint_vel = self.robot.data.joint_vel[:, self._motion_loader.joint_sequence_index]
-        joint_target = self.robot.data.joint_pos_target[:, self._motion_loader.joint_sequence_index]
+        joint_pos = self.robot.data.joint_pos[:, self.motion_joint_ids]
+        joint_vel = self.robot.data.joint_vel[:, self.motion_joint_ids]
+        joint_target = self.robot.data.joint_pos_target[:, self.motion_joint_ids]
         # joint_acc = self.robot.data.joint_acc[:, self._motion_loader.joint_sequence_index]
         if not self.add_model_history:
             if self._motion_loader.hand_marker is None:
@@ -962,9 +993,9 @@ class HumanoidOperatorEnv(DirectRLEnv):
         reset_masses(self.robot, self._ALL_INDICES)
     
     def compute_model_pairs(self, add_noise: bool = False) -> Dict[str, torch.Tensor]:
-        joint_limit_delta = (self.joint_upper_limits - self.joint_lower_limits)[:, self._motion_loader.joint_sequence_index]
-        joint_lower_limits = self.joint_lower_limits[:, self._motion_loader.joint_sequence_index]
-        joint_vel_limits = self.joint_vel_limits[:, self._motion_loader.joint_sequence_index]
+        joint_limit_delta = (self.joint_upper_limits - self.joint_lower_limits)[:, self.motion_joint_ids]
+        joint_lower_limits = self.joint_lower_limits[:, self.motion_joint_ids]
+        joint_vel_limits = self.joint_vel_limits[:, self.motion_joint_ids]
 
         sub_env_limit_delta = joint_limit_delta[::self.num_sensor_positions]
         sub_env_lower_limits = joint_lower_limits[::self.num_sensor_positions]
@@ -973,12 +1004,18 @@ class HumanoidOperatorEnv(DirectRLEnv):
         joint_pos = torch.zeros(self.num_sub_environments, self.num_dofs, device=self.device)
         joint_vel = torch.zeros(self.num_sub_environments, self.num_dofs, device=self.device)
 
-        joint_pos[:, self._motion_loader.joint_sequence_index] = 0.8 * (torch.rand(self.num_sub_environments, len(self._motion_loader.joint_sequence_index), device=self.device) * sub_env_limit_delta + sub_env_lower_limits)
-        joint_vel[:, self._motion_loader.joint_sequence_index] = 0.5 * (torch.rand(self.num_sub_environments, len(self._motion_loader.joint_sequence_index), device=self.device) * sub_env_vel_limits)
+        joint_pos[:, self._motion_loader.joint_sequence_index] = 0.8 * (
+            torch.rand(self.num_sub_environments, len(self._motion_loader.joint_sequence_index), device=self.device)
+            * sub_env_limit_delta + sub_env_lower_limits
+        )
+        joint_vel[:, self._motion_loader.joint_sequence_index] = 0.5 * (
+            torch.rand(self.num_sub_environments, len(self._motion_loader.joint_sequence_index), device=self.device)
+            * sub_env_vel_limits
+        )
         
         joint_pos = joint_pos.repeat_interleave(self.num_sensor_positions, dim=0)
         joint_vel = joint_vel.repeat_interleave(self.num_sensor_positions, dim=0)
-        self.robot.write_joint_state_to_sim(joint_pos, joint_vel)
+        self.robot.write_joint_state_to_sim(joint_pos, joint_vel, joint_ids=self.motion_joint_ids)
 
         self.sample_all_dynamics(sub_env_consistent=True)
         if not self.add_model_history:
@@ -1006,17 +1043,19 @@ class HumanoidOperatorEnv(DirectRLEnv):
             for i in range(fill_length):
                 # NOTE: We first step random points
                 random_target = torch.zeros(self.num_envs, self.num_dofs, device=self.device)
-                random_target[:, self._motion_loader.joint_sequence_index] = 0.8 * (torch.rand_like(self.robot.data.joint_pos[:, self._motion_loader.joint_sequence_index]) * joint_limit_delta + joint_lower_limits)
-                self.robot.set_joint_position_target(random_target)
+                random_target[:, self._motion_loader.joint_sequence_index] = 0.8 * (
+                    torch.rand_like(self.robot.data.joint_pos[:, self.motion_joint_ids]) * joint_limit_delta + joint_lower_limits
+                )
+                self.robot.set_joint_position_target(random_target, joint_ids=self.motion_joint_ids)
 
                 obs = self.compute_model_observation(add_noise)
                 self._raw_step_simulator()
 
             obs = self.compute_model_observation(add_noise)
             obs = obs[::self.num_sensor_positions]
-            joint_pos = self.robot.data.joint_pos[::self.num_sensor_positions].repeat_interleave(self.num_sensor_positions, dim=0)
-            joint_vel = self.robot.data.joint_vel[::self.num_sensor_positions].repeat_interleave(self.num_sensor_positions, dim=0)
-            self.robot.write_joint_state_to_sim(joint_pos, joint_vel * 0)
+            joint_pos = self.robot.data.joint_pos[::self.num_sensor_positions][:, self.motion_joint_ids].repeat_interleave(self.num_sensor_positions, dim=0)
+            joint_vel = self.robot.data.joint_vel[::self.num_sensor_positions][:, self.motion_joint_ids].repeat_interleave(self.num_sensor_positions, dim=0)
+            self.robot.write_joint_state_to_sim(joint_pos, joint_vel * 0, joint_ids=self.motion_joint_ids)
             if self.cfg.delta_sensor_position:
                 self.robot.set_joint_position_target(self.sensor_positions + joint_pos)
             else:
@@ -1033,9 +1072,9 @@ class HumanoidOperatorEnv(DirectRLEnv):
             }
     # ------------------------------------ reward functions ------------------------------------
     def _reward_tracking(self):
-        # robot current state
-        robot_dof_positions = self.robot.data.joint_pos     # shape: (num_envs, num_dofs)
-        robot_dof_velocities = self.robot.data.joint_vel    # shape: (num_envs, num_dofs)
+        # robot current state (motion joints only)
+        robot_dof_positions = self.robot.data.joint_pos[:, self.motion_joint_ids]     # shape: (num_envs, num_dofs)
+        robot_dof_velocities = self.robot.data.joint_vel[:, self.motion_joint_ids]    # shape: (num_envs, num_dofs)
 
         # sampled state from MotionLoader
         real_dof_positions = self._motion_loader.dof_positions[self.motion_indices, self.time_indices]   # shape: (num_envs, num_dofs)
