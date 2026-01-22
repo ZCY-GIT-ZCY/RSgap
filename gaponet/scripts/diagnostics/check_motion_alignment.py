@@ -1,0 +1,83 @@
+"""Quick alignment check between motion data and sim joints.
+
+Runs a short rollout using zero delta-action and reports joint position errors.
+This script is agibot-specific and does not affect other robots.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+
+import gymnasium as gym
+import numpy as np
+import torch
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Check motion alignment for humanoid_agibot")
+    parser.add_argument(
+        "--task",
+        type=str,
+        default="Isaac-Humanoid-AGIBOT-Delta-Action",
+        help="Gym task id to run.",
+    )
+    parser.add_argument("--num-envs", type=int, default=1, help="Number of envs to create.")
+    parser.add_argument("--num-steps", type=int, default=200, help="Number of steps to run.")
+    parser.add_argument("--motion-index", type=int, default=0, help="Fixed motion index to use.")
+    parser.add_argument("--time-index", type=int, default=0, help="Fixed start time index to use.")
+    parser.add_argument("--device", type=str, default="cuda:0", help="Simulation device.")
+    args = parser.parse_args()
+
+    # Ensure task registration.
+    import sim2real.tasks.humanoid_agibot  # noqa: F401
+
+    # Build env config overrides.
+    env = gym.make(
+        args.task,
+        cfg={
+            "scene": {"num_envs": args.num_envs},
+            "sim": {"device": args.device},
+        },
+        render_mode=None,
+    )
+
+    env_unwrapped = env.unwrapped
+    num_actions = env_unwrapped.cfg.action_space
+    device = env_unwrapped.device
+
+    # Initialize motion indices.
+    motion_indices = torch.full((args.num_envs,), args.motion_index, dtype=torch.long, device=device)
+    time_indices = torch.full((args.num_envs,), args.time_index, dtype=torch.long, device=device)
+
+    # Zero delta-action to directly follow motion targets.
+    zero_action = torch.zeros((args.num_envs, num_actions), device=device)
+
+    joint_err_means = []
+    joint_err_maxs = []
+
+    for _ in range(args.num_steps):
+        _, _, dones, info = env_unwrapped.step_operator(
+            zero_action, motion_coords=(motion_indices, time_indices)
+        )
+        # info["episode"]["joint_pos_diff"] shape: (num_envs, num_dofs)
+        joint_pos_diff = info["episode"]["joint_pos_diff"].detach().cpu().numpy()
+        joint_err_means.append(float(np.mean(joint_pos_diff)))
+        joint_err_maxs.append(float(np.max(joint_pos_diff)))
+
+        # advance time indices for the next step (mirror env internal logic)
+        time_indices = time_indices + 1
+        if bool(torch.any(dones)):
+            break
+
+    print("Alignment check results:")
+    print(f"  steps: {len(joint_err_means)}")
+    print(f"  mean joint error (deg): {np.mean(joint_err_means):.4f}")
+    print(f"  max joint error (deg): {np.max(joint_err_maxs):.4f}")
+
+    env.close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
