@@ -78,18 +78,38 @@ class MotionLoaderMotor:
             self.dof_velocities_list = []
             self.dof_target_pos_list = []
             self.dof_torque_list = []
-            self.dof_positions = torch.as_tensor(data["real_dof_positions_padded"], dtype=torch.float32, device=self.device)
-            self.dof_velocities = torch.as_tensor(data["real_dof_velocities_padded"], dtype=torch.float32, device=self.device)
-            self.dof_target_pos = torch.as_tensor(data["real_dof_positions_cmd_padded"], dtype=torch.float32, device=self.device)
-            self.dof_torque = torch.as_tensor(data["real_dof_torques_padded"], dtype=torch.float32, device=self.device)
+            t0 = time.time()
+            pos_np = np.asarray(data["real_dof_positions_padded"], dtype=np.float32)
+            vel_np = np.asarray(data["real_dof_velocities_padded"], dtype=np.float32)
+            tgt_np = np.asarray(data["real_dof_positions_cmd_padded"], dtype=np.float32)
+            tq_np = np.asarray(data["real_dof_torques_padded"], dtype=np.float32)
+            print(f"[MotionLoader] dense np arrays loaded in {time.time() - t0:.3f}s", flush=True)
+
+            t0 = time.time()
+            self.dof_positions = torch.from_numpy(pos_np)
+            self.dof_velocities = torch.from_numpy(vel_np)
+            self.dof_target_pos = torch.from_numpy(tgt_np)
+            self.dof_torque = torch.from_numpy(tq_np)
+            print(f"[MotionLoader] dense tensors (CPU) in {time.time() - t0:.3f}s", flush=True)
             self.motion_num = self.dof_positions.shape[0]
             max_len_timestep = self.dof_positions.shape[1]
             self.motion_len = torch.as_tensor(data["motion_len"], dtype=torch.long, device=self.device)
             if "sim_dof_positions_padded" in data:
-                self.sim_dof_positions = torch.as_tensor(data["sim_dof_positions_padded"], dtype=torch.float32, device=self.device)
+                sim_np = np.asarray(data["sim_dof_positions_padded"], dtype=np.float32)
+                self.sim_dof_positions = torch.from_numpy(sim_np)
             else:
                 self.sim_dof_positions = None
             print(f"[MotionLoader] motions={self.motion_num}, max_len={max_len_timestep}", flush=True)
+
+            if str(self.device) != "cpu":
+                t0 = time.time()
+                self.dof_positions = self.dof_positions.to(self.device)
+                self.dof_velocities = self.dof_velocities.to(self.device)
+                self.dof_target_pos = self.dof_target_pos.to(self.device)
+                self.dof_torque = self.dof_torque.to(self.device)
+                if self.sim_dof_positions is not None:
+                    self.sim_dof_positions = self.sim_dof_positions.to(self.device)
+                print(f"[MotionLoader] dense tensors moved to {self.device} in {time.time() - t0:.3f}s", flush=True)
         else:
             print("[MotionLoader] reading arrays...", flush=True)
             t0 = time.time()
