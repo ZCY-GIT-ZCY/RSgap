@@ -84,7 +84,7 @@ def check_gaponet_format(data: np.lib.npyio.NpzFile, expected_dofs: int) -> List
         errors.append("missing motion arrays: provide object or dense padded keys")
 
     if "joint_sequence" in data.files:
-        joint_seq = np.array(data["joint_sequence"], dtype=object)
+        joint_seq = np.array(data["joint_sequence"], dtype=str)
         if joint_seq.shape[0] != expected_dofs:
             errors.append(f"joint_sequence length mismatch: {joint_seq.shape[0]} != {expected_dofs}")
 

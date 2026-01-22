@@ -66,7 +66,7 @@ meshes/omnipicker/xxx.dae
 说明：
 - joints 顺序必须与 `motion_agibot.npz` 的 `joint_sequence` 一致。
 - links 顺序需与 URDF 中链接名称一致，用于 body index/对齐。
-- 当前版本按 **16 关节**（头 2 + 左臂 7 + 右臂 7）。
+- 当前版本按 **18 关节**（头 2 + 左臂 7 + 右臂 7 + 夹爪 2）。
 
 ---
 
@@ -147,7 +147,7 @@ README 只要求：
   - `wrist_index` 在无腕关节时返回空张量，避免硬编码腕关节报错
 
 ### 4.1.3 运行期修正（运动关节映射）
-为解决机器人关节数（34）与 motion DOF（16）不一致导致的 shape mismatch：
+为解决机器人关节数（34）与 motion DOF（18）不一致导致的 shape mismatch：
 - `humanoid_agibot_env.py` 中新增 motion→robot 关节索引映射
 - 所有写入/读取机器人关节状态与 target 的操作使用该映射（`joint_ids`）
 
@@ -157,6 +157,19 @@ README 只要求：
 - 同时保留 `model` 与 `operator` 字段用于调试/记录
 
 ### 4.1.5 运行期修正（DeepONet 类注册）
+### 4.1.6 运行期修正（夹爪 DOF 加入 motion）
+为减少偏差，仅保留两路夹爪标量（总 18 DOF）：
+- `agibot/scripts/data_utils.py`
+  - 将 `observation.state[0/1]` 与 `action[0/1]` 的夹爪原始值加入 `real_joint_pos` / `target_joint_pos`
+  - **线性映射**：原始范围 `[0, 120]` → `outer_joint1` 的 URDF 关节范围 `[0, pi/4]`
+  - 关节顺序扩展为：`head(2) + arm_l(7) + arm_r(7) + gripper(2)`
+- `agibot/scripts/convert_parquet_to_npz.py`
+  - `joint_sequence` 改为 18 关节（与上述顺序一致）
+- `sim2real/tasks/humanoid_agibot/motions/joint_names.py`
+  - `agibot_g1_joints` 追加左右各 1 个夹爪关节
+- `humanoid_agibot_env_cfg.py` / `rsl_rl_operator_cfg.py`
+  - `action_space`, `sensor_dim`, `model_history_dim`, `trunk_input_dim`, `branch_input_dims`, `critic_input_dim` 同步为 18 DOF
+
 为解决 `DeepONetActorCritic` 在 rsl-rl 里 `eval()` 找不到的问题：
 - `humanoid_agibot/agents/rsl_rl_operator_cfg.py` 增加 `from sim2real.rsl_rl.modules import DeepONetActorCritic`
 - `scripts/reinforcement_learning/rsl_rl/train.py` 注入 `DeepONetActorCritic` 到 `rsl_rl.runners.on_policy_runner` 的全局命名空间
@@ -221,6 +234,6 @@ python scripts/rsl_rl/train.py --task Isaac-Humanoid-AGIBOT-Delta-Action \
 - 自碰撞：`enabled_self_collisions=False`
 
 **正确性风险提示（agent 输入维度）**  
-`critic_input_dim` 中 `robot_mass` 的长度按 42 links 估算（来自 agibot link 列表）。  
-若实际 `num_bodies` 不为 42，需要改为：  
-`sensor_dim*num_sensor_positions + 16 + 48 + 32 + 1 + 2 + num_bodies`
+`critic_input_dim` 中 `robot_mass` 的长度按 35 bodies 估算（来自运行时 `robot.data.default_mass`）。  
+若实际 `num_bodies` 不为 35，需要改为：  
+`sensor_dim*num_sensor_positions + 18 + 54 + 36 + 1 + 2 + num_bodies`

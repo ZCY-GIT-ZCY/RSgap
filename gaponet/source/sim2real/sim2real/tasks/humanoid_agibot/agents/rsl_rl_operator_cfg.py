@@ -14,30 +14,30 @@ class DeepONetActorCriticCfg:
 
     """Configuration for DeepONet Actor-Critic network"""
     # Branch network configuration
-    branch_input_dims: List[int] = [32]  # 1 * sensor_dim (16 joints: pos+vel)
+    branch_input_dims: List[int] = [36]  # 1 * sensor_dim (18 joints: pos+vel)
     branch_hidden_dim: int = 256  # Hidden dimension for branch networks
     
     # Trunk network configuration
-    trunk_input_dim: int = 16  # Input dimension for trunk network
+    trunk_input_dim: int = 18  # Input dimension for trunk network
     trunk_hidden_dims: List[int] = [128, 128, 128]  # Hidden dimensions for trunk network
     
     # Output configuration
     activation: str = "elu"  # Activation function
     
     # Critic network configuration
-    # 32 (sensor) + 16 (current action) + 48 (joint pos/vel/acc) + 32 (real pos/vel)
+    # 36 (sensor) + 18 (current action) + 54 (joint pos/vel/acc) + 36 (real pos/vel)
     # + 1 (wrist payload) + 2 (hand payloads) + num_bodies (robot mass)
-    critic_input_dim: int = 166  # 131 + num_bodies (35) for agibot_g1
+    critic_input_dim: int = 182  # 147 + num_bodies (35) for agibot_g1
     critic_hidden_dims: List[int] = [256, 128, 128]  # Hidden dimensions for critic network
 
     # Model network configuration
-    model_input_dim: int = 16 + 48 * 4  # Input dimension for model network
-    model_output_dim: int = 400  # Output dimension for model network
+    model_input_dim: int = 18 + 54 * 4  # Input dimension for model network
+    model_output_dim: int = 36  # Output dimension for model network
     model_hidden_dims: List[int] = [128, 128]  # Hidden dimensions for model network
 
     # Model history configuration
     model_history_length: int = 4  # Number of history steps to keep
-    model_history_dim: int = 48
+    model_history_dim: int = 54
     model_pretrained_path: str = ""
 
 @configclass

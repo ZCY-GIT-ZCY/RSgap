@@ -1,7 +1,7 @@
 
 # USDS
 ROBOT_BODY_JOINT_NAME_DICT = {
-    # agibot_g1 (42 links, 16 joints)
+    # agibot_g1 (42 links, 18 joints)
     "agibot_g1_links": [
         'base_link', 'body_link1', 'body_link2', 'head_link1', 'head_link2',
         'arm_base_link', 'arm_l_base_link', 'arm_r_base_link',
@@ -26,6 +26,7 @@ ROBOT_BODY_JOINT_NAME_DICT = {
         'idx61_arm_r_joint1', 'idx62_arm_r_joint2', 'idx63_arm_r_joint3',
         'idx64_arm_r_joint4', 'idx65_arm_r_joint5', 'idx66_arm_r_joint6',
         'idx67_arm_r_joint7',
+        'idx41_gripper_l_outer_joint1', 'idx81_gripper_r_outer_joint1',
     ],
 }
 
@@ -39,6 +40,7 @@ ROBOT_JOINT_NAME_DICT_URDF = {
         'idx61_arm_r_joint1', 'idx62_arm_r_joint2', 'idx63_arm_r_joint3',
         'idx64_arm_r_joint4', 'idx65_arm_r_joint5', 'idx66_arm_r_joint6',
         'idx67_arm_r_joint7',
+        'idx41_gripper_l_outer_joint1', 'idx81_gripper_r_outer_joint1',
     ],
 }
 

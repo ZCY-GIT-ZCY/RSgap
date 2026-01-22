@@ -93,6 +93,8 @@ class HumanoidOperatorEnv(DirectRLEnv):
         self.delta_action_joint_indices = self.motion_joint_ids_tensor
 
         self.add_model_history = self.cfg.add_model_history
+        if not self.add_model_history:
+            raise ValueError("humanoid_agibot currently requires add_model_history=True for model dims.")
         self.model_history = torch.zeros((self.num_envs, self.cfg.model_history_length, self.cfg.model_history_dim), device=self.device)
 
         self.run_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')

@@ -83,6 +83,11 @@ class MotionLoaderMotor:
             vel_np = np.asarray(data["real_dof_velocities_padded"], dtype=np.float32)
             tgt_np = np.asarray(data["real_dof_positions_cmd_padded"], dtype=np.float32)
             tq_np = np.asarray(data["real_dof_torques_padded"], dtype=np.float32)
+            if self.motion_index > 0:
+                pos_np = pos_np[self.motion_index:]
+                vel_np = vel_np[self.motion_index:]
+                tgt_np = tgt_np[self.motion_index:]
+                tq_np = tq_np[self.motion_index:]
             print(f"[MotionLoader] dense np arrays loaded in {time.time() - t0:.3f}s", flush=True)
 
             t0 = time.time()
@@ -93,9 +98,14 @@ class MotionLoaderMotor:
             print(f"[MotionLoader] dense tensors (CPU) in {time.time() - t0:.3f}s", flush=True)
             self.motion_num = self.dof_positions.shape[0]
             max_len_timestep = self.dof_positions.shape[1]
-            self.motion_len = torch.as_tensor(data["motion_len"], dtype=torch.long, device=self.device)
+            motion_len_np = np.asarray(data["motion_len"], dtype=np.int64)
+            if self.motion_index > 0:
+                motion_len_np = motion_len_np[self.motion_index:]
+            self.motion_len = torch.as_tensor(motion_len_np, dtype=torch.long, device=self.device)
             if "sim_dof_positions_padded" in data:
                 sim_np = np.asarray(data["sim_dof_positions_padded"], dtype=np.float32)
+                if self.motion_index > 0:
+                    sim_np = sim_np[self.motion_index:]
                 self.sim_dof_positions = torch.from_numpy(sim_np)
             else:
                 self.sim_dof_positions = None
