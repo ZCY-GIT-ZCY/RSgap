@@ -1,2 +1,7 @@
 agibot/data/H3_example/videos/
 sgae_file_process/source_data/
+logs/rsl_rl/
+outputs/
+wandb/
+__pycache__/
+*.pyc
