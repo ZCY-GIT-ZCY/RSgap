@@ -182,7 +182,8 @@ class MotionLoaderMotor:
                     self.sim_dof_positions = self.sim_dof_positions.to(self.device)
         
 
-        self.joint_sequence = data["joint_sequence"]
+        # Force string dtype to avoid object-pickle issues inside Kit numpy.
+        self.joint_sequence = np.asarray(data["joint_sequence"], dtype=str)
         print("Delta action joints:", self.joint_sequence)
         # if left_elbow_pitch_joint in self.joint_sequence, replace it with left_elbow_joint
         # Index of joint name in joint_sequence corresponding to self._dof_names, shape:(10,)
@@ -198,7 +199,7 @@ class MotionLoaderMotor:
             self.hand_marker = None
 
         if "joint_names" in data:
-            self.joint_names = data["joint_names"]
+            self.joint_names = np.asarray(data["joint_names"], dtype=str)
             self.joint_index = torch.tensor([self._dof_names.index(joint) for joint in self.joint_names], dtype=torch.long, device=self.device)
         else:
             self.joint_index = None

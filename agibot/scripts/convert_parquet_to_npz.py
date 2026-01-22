@@ -185,9 +185,9 @@ def main() -> int:
         real_dof_positions_cmd_padded=pad_motion_arrays(target_positions_list, max_len),
         real_dof_torques_padded=pad_motion_arrays(torques_list, max_len),
         motion_len=motion_len,
-        joint_sequence=np.array(joint_names, dtype=object),
+        joint_sequence=np.array(joint_names, dtype=str),
         payloads=payloads,
-        joint_names=np.array(joint_names, dtype=object),
+        joint_names=np.array(joint_names, dtype=str),
     )
 
     print(f"[Saved] {output_path}")

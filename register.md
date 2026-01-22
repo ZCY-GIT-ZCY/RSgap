@@ -130,6 +130,21 @@ README 只要求：
 
 说明：这些 payload 仅用于承载质量随机化逻辑；若后续把 payload 写进 URDF，可移除小球占位。
 
+### 4.1.2 运行期修正（motion npz 读取与兼容）
+为解决 IsaacSim/Kit 在读取 object dtype 的 `npz` 时卡住/报错，做了如下修正：
+
+- `agibot/scripts/convert_parquet_to_npz.py`
+  - 新增 dense padded keys：
+    - `real_dof_positions_padded`
+    - `real_dof_velocities_padded`
+    - `real_dof_positions_cmd_padded`
+    - `real_dof_torques_padded`
+    - `motion_len`
+  - `joint_sequence` / `joint_names` 保存为 **字符串数组**（`dtype=str`），避免 object pickle 问题
+- `sim2real/tasks/humanoid_agibot/motions/motion_motor_loader.py`
+  - 优先读取 dense padded keys（若存在）
+  - 读取 `joint_sequence` / `joint_names` 时强制转为 `dtype=str`
+
 ### 4.2 注册新环境任务
 修改文件：`gaponet/source/sim2real/sim2real/tasks/humanoid_agibot/__init__.py`
 
