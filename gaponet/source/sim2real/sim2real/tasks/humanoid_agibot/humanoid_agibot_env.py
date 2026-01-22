@@ -433,6 +433,8 @@ class HumanoidOperatorEnv(DirectRLEnv):
             "model": model_obs,
             "operator": operator_obs,
             "policy": policy_obs,
+            # Privileged observations for critic (used by OnPolicyRunner).
+            "critic": operator_obs["critic"],
         }
 
     def _get_rewards(self) -> torch.Tensor:
