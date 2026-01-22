@@ -25,7 +25,9 @@ class DeepONetActorCriticCfg:
     activation: str = "elu"  # Activation function
     
     # Critic network configuration
-    critic_input_dim: int = 32 + 16 + 48 + 32 + 1 + 2 + 42  # Input dimension for critic network
+    # 32 (sensor) + 16 (current action) + 48 (joint pos/vel/acc) + 32 (real pos/vel)
+    # + 1 (wrist payload) + 2 (hand payloads) + num_bodies (robot mass)
+    critic_input_dim: int = 166  # 131 + num_bodies (35) for agibot_g1
     critic_hidden_dims: List[int] = [256, 128, 128]  # Hidden dimensions for critic network
 
     # Model network configuration
