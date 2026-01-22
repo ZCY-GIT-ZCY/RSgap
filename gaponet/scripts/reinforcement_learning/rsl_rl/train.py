@@ -51,6 +51,11 @@ from datetime import datetime
 
 import sim2real.tasks.humanoid_operator
 import sim2real.tasks.humanoid_agibot
+from sim2real.rsl_rl.modules import DeepONetActorCritic
+import rsl_rl.runners.on_policy_runner as on_policy_runner
+
+# Make DeepONetActorCritic discoverable by rsl_rl eval()
+on_policy_runner.DeepONetActorCritic = DeepONetActorCritic
 from rsl_rl.runners import OnPolicyRunner
 
 from isaaclab.envs import (

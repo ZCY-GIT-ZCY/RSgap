@@ -159,6 +159,7 @@ README 只要求：
 ### 4.1.5 运行期修正（DeepONet 类注册）
 为解决 `DeepONetActorCritic` 在 rsl-rl 里 `eval()` 找不到的问题：
 - `humanoid_agibot/agents/rsl_rl_operator_cfg.py` 增加 `from sim2real.rsl_rl.modules import DeepONetActorCritic`
+- `scripts/reinforcement_learning/rsl_rl/train.py` 注入 `DeepONetActorCritic` 到 `rsl_rl.runners.on_policy_runner` 的全局命名空间
 
 ### 4.2 注册新环境任务
 修改文件：`gaponet/source/sim2real/sim2real/tasks/humanoid_agibot/__init__.py`
