@@ -189,8 +189,24 @@ class MotionLoaderMotor:
         # Index of joint name in joint_sequence corresponding to self._dof_names, shape:(10,)
 
         self.joint_sequence_index = torch.tensor([self._dof_names.index(joint) for joint in self.joint_sequence], dtype=torch.long, device=self.device)
-        self.joint_sequence_wo_wrist = torch.tensor([self._dof_names.index(joint) for joint in self.joint_sequence if joint not in ["right_wrist_roll_joint", "right_wrist_pitch_joint", "right_wrist_yaw_joint", "left_wrist_roll_joint", "left_wrist_pitch_joint", "left_wrist_yaw_joint"]], dtype=torch.long, device=self.device)
-        self.wrist_index = torch.tensor([self._dof_names.index(joint) for joint in ["right_wrist_roll_joint", "right_wrist_pitch_joint", "right_wrist_yaw_joint", "left_wrist_roll_joint", "left_wrist_pitch_joint", "left_wrist_yaw_joint"]], dtype=torch.long, device=self.device)
+        wrist_joint_names = [
+            "right_wrist_roll_joint",
+            "right_wrist_pitch_joint",
+            "right_wrist_yaw_joint",
+            "left_wrist_roll_joint",
+            "left_wrist_pitch_joint",
+            "left_wrist_yaw_joint",
+        ]
+        self.joint_sequence_wo_wrist = torch.tensor(
+            [self._dof_names.index(joint) for joint in self.joint_sequence if joint not in wrist_joint_names],
+            dtype=torch.long,
+            device=self.device,
+        )
+        available_wrist = [j for j in wrist_joint_names if j in self._dof_names]
+        if available_wrist:
+            self.wrist_index = torch.tensor([self._dof_names.index(joint) for joint in available_wrist], dtype=torch.long, device=self.device)
+        else:
+            self.wrist_index = torch.tensor([], dtype=torch.long, device=self.device)
         
         self.payload_sequence = torch.from_numpy(data["payloads"]).float().to(self.device).unsqueeze(1)
         if "hand_marker" in data:

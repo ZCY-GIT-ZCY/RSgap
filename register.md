@@ -144,6 +144,7 @@ README 只要求：
 - `sim2real/tasks/humanoid_agibot/motions/motion_motor_loader.py`
   - 优先读取 dense padded keys（若存在）
   - 读取 `joint_sequence` / `joint_names` 时强制转为 `dtype=str`
+  - `wrist_index` 在无腕关节时返回空张量，避免硬编码腕关节报错
 
 ### 4.2 注册新环境任务
 修改文件：`gaponet/source/sim2real/sim2real/tasks/humanoid_agibot/__init__.py`
