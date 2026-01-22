@@ -9,6 +9,13 @@ Outputs keys expected by GapONet motion loaders:
 - joint_sequence
 - payloads
 - joint_names (optional but included)
+
+Dense padded keys (recommended for IsaacSim/Kit loader):
+- real_dof_positions_padded
+- real_dof_velocities_padded
+- real_dof_positions_cmd_padded
+- real_dof_torques_padded
+- motion_len
 """
 
 from __future__ import annotations
@@ -71,6 +78,16 @@ def compute_velocity(positions: np.ndarray, timestamps: np.ndarray, fallback_dt:
 def to_object_array(list_of_arrays: List[np.ndarray]) -> np.ndarray:
     """Store variable-length motions as object arrays for npz (allow_pickle=True)."""
     return np.array(list_of_arrays, dtype=object)
+
+
+def pad_motion_arrays(list_of_arrays: List[np.ndarray], max_len: int) -> np.ndarray:
+    """Pad variable-length motion arrays to a dense [N, T, D] float32 array."""
+    num_motions = len(list_of_arrays)
+    dof = list_of_arrays[0].shape[1]
+    padded = np.zeros((num_motions, max_len, dof), dtype=np.float32)
+    for i, arr in enumerate(list_of_arrays):
+        padded[i, : arr.shape[0], :] = arr
+    return padded
 
 
 def main() -> int:
@@ -151,6 +168,8 @@ def main() -> int:
         raise RuntimeError("No valid episodes converted. Nothing to save.")
 
     payloads = np.zeros(len(real_positions_list), dtype=np.float32)
+    motion_len = np.array([arr.shape[0] for arr in real_positions_list], dtype=np.int64)
+    max_len = int(motion_len.max())
 
     output_path = Path(args.output) if args.output else dataset_path / "motion_agibot.npz"
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -161,6 +180,11 @@ def main() -> int:
         real_dof_velocities=to_object_array(velocities_list),
         real_dof_positions_cmd=to_object_array(target_positions_list),
         real_dof_torques=to_object_array(torques_list),
+        real_dof_positions_padded=pad_motion_arrays(real_positions_list, max_len),
+        real_dof_velocities_padded=pad_motion_arrays(velocities_list, max_len),
+        real_dof_positions_cmd_padded=pad_motion_arrays(target_positions_list, max_len),
+        real_dof_torques_padded=pad_motion_arrays(torques_list, max_len),
+        motion_len=motion_len,
         joint_sequence=np.array(joint_names, dtype=object),
         payloads=payloads,
         joint_names=np.array(joint_names, dtype=object),

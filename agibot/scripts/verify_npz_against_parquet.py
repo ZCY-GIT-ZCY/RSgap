@@ -19,10 +19,6 @@ from data_utils import DataLoader, frames_to_arrays, JointNameMapper
 
 
 REQUIRED_KEYS = [
-    "real_dof_positions",
-    "real_dof_velocities",
-    "real_dof_positions_cmd",
-    "real_dof_torques",
     "joint_sequence",
     "payloads",
 ]
@@ -65,6 +61,28 @@ def check_gaponet_format(data: np.lib.npyio.NpzFile, expected_dofs: int) -> List
         if key not in data.files:
             errors.append(f"missing key: {key}")
 
+    has_object = all(
+        key in data.files
+        for key in [
+            "real_dof_positions",
+            "real_dof_velocities",
+            "real_dof_positions_cmd",
+            "real_dof_torques",
+        ]
+    )
+    has_dense = all(
+        key in data.files
+        for key in [
+            "real_dof_positions_padded",
+            "real_dof_velocities_padded",
+            "real_dof_positions_cmd_padded",
+            "real_dof_torques_padded",
+            "motion_len",
+        ]
+    )
+    if not has_object and not has_dense:
+        errors.append("missing motion arrays: provide object or dense padded keys")
+
     if "joint_sequence" in data.files:
         joint_seq = np.array(data["joint_sequence"], dtype=object)
         if joint_seq.shape[0] != expected_dofs:
@@ -75,26 +93,56 @@ def check_gaponet_format(data: np.lib.npyio.NpzFile, expected_dofs: int) -> List
         if payloads.ndim != 1:
             errors.append("payloads must be 1D array")
 
-    for key in [
-        "real_dof_positions",
-        "real_dof_velocities",
-        "real_dof_positions_cmd",
-        "real_dof_torques",
-    ]:
-        if key not in data.files:
-            continue
-        arr = np.array(data[key], dtype=object)
-        if arr.ndim != 1:
-            errors.append(f"{key} should be an object array of motions")
-            continue
-        for idx, motion in enumerate(arr):
-            if not isinstance(motion, np.ndarray):
-                errors.append(f"{key}[{idx}] is not ndarray")
+    if has_object:
+        for key in [
+            "real_dof_positions",
+            "real_dof_velocities",
+            "real_dof_positions_cmd",
+            "real_dof_torques",
+        ]:
+            arr = np.array(data[key], dtype=object)
+            if arr.ndim != 1:
+                errors.append(f"{key} should be an object array of motions")
                 continue
-            if motion.ndim != 2 or motion.shape[1] != expected_dofs:
-                errors.append(f"{key}[{idx}] shape invalid: {motion.shape}")
+            for idx, motion in enumerate(arr):
+                if not isinstance(motion, np.ndarray):
+                    errors.append(f"{key}[{idx}] is not ndarray")
+                    continue
+                if motion.ndim != 2 or motion.shape[1] != expected_dofs:
+                    errors.append(f"{key}[{idx}] shape invalid: {motion.shape}")
+    if has_dense:
+        for key in [
+            "real_dof_positions_padded",
+            "real_dof_velocities_padded",
+            "real_dof_positions_cmd_padded",
+            "real_dof_torques_padded",
+        ]:
+            arr = np.array(data[key])
+            if arr.ndim != 3 or arr.shape[2] != expected_dofs:
+                errors.append(f"{key} should be [N,T,D], got {arr.shape}")
+        motion_len = np.array(data["motion_len"])
+        if motion_len.ndim != 1:
+            errors.append("motion_len must be 1D array")
 
     return errors
+
+
+def get_motion_arrays(data: np.lib.npyio.NpzFile) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return (real, vel, target, torque, motion_len) arrays."""
+    if "real_dof_positions_padded" in data.files:
+        real = np.array(data["real_dof_positions_padded"])
+        vel = np.array(data["real_dof_velocities_padded"])
+        target = np.array(data["real_dof_positions_cmd_padded"])
+        torque = np.array(data["real_dof_torques_padded"])
+        motion_len = np.array(data["motion_len"])
+        return real, vel, target, torque, motion_len
+
+    motions_real = np.array(data["real_dof_positions"], dtype=object)
+    motions_vel = np.array(data["real_dof_velocities"], dtype=object)
+    motions_target = np.array(data["real_dof_positions_cmd"], dtype=object)
+    motions_torque = np.array(data["real_dof_torques"], dtype=object)
+    motion_len = np.array([m.shape[0] for m in motions_real], dtype=np.int64)
+    return motions_real, motions_vel, motions_target, motions_torque, motion_len
 
 
 def compare_episode(
@@ -169,10 +217,7 @@ def main() -> int:
         return 1
     print("[Format] OK")
 
-    motions_real = np.array(data["real_dof_positions"], dtype=object)
-    motions_vel = np.array(data["real_dof_velocities"], dtype=object)
-    motions_target = np.array(data["real_dof_positions_cmd"], dtype=object)
-    motions_torque = np.array(data["real_dof_torques"], dtype=object)
+    motions_real, motions_vel, motions_target, motions_torque, motion_len = get_motion_arrays(data)
 
     if len(motions_real) < len(episode_indices):
         print(f"[Compare] NPZ motions count {len(motions_real)} < episodes {len(episode_indices)}")
@@ -182,7 +227,16 @@ def main() -> int:
     for idx, ep in enumerate(episode_indices):
         frames = loader.load_episode(ep)
         arrays = frames_to_arrays(frames)
-        npz_entry = (motions_real[idx], motions_vel[idx], motions_target[idx], motions_torque[idx])
+        if motions_real.ndim == 3:
+            length = int(motion_len[idx])
+            npz_entry = (
+                motions_real[idx, :length, :],
+                motions_vel[idx, :length, :],
+                motions_target[idx, :length, :],
+                motions_torque[idx, :length, :],
+            )
+        else:
+            npz_entry = (motions_real[idx], motions_vel[idx], motions_target[idx], motions_torque[idx])
         errors.extend(
             compare_episode(
                 ep_index=ep,

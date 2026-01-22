@@ -71,75 +71,95 @@ class MotionLoaderMotor:
 
 
         # type: List[ndarray]
-        print("[MotionLoader] reading arrays...", flush=True)
-        t0 = time.time()
-        self.dof_positions_list = data["real_dof_positions"][self.motion_index:]
-        print(f"[MotionLoader] real_dof_positions loaded in {time.time() - t0:.3f}s", flush=True)
-        t0 = time.time()
-        self.dof_velocities_list = data["real_dof_velocities"][self.motion_index:]
-        print(f"[MotionLoader] real_dof_velocities loaded in {time.time() - t0:.3f}s", flush=True)
-        t0 = time.time()
-        self.dof_target_pos_list = data["real_dof_positions_cmd"][self.motion_index:]
-        print(f"[MotionLoader] real_dof_positions_cmd loaded in {time.time() - t0:.3f}s", flush=True)
-        t0 = time.time()
-        self.dof_torque_list = data["real_dof_torques"][self.motion_index:]
-        print(f"[MotionLoader] real_dof_torques loaded in {time.time() - t0:.3f}s", flush=True)
-        if 'sim_dof_positions' in data:
-            self.sim_dof_positions_list = data["sim_dof_positions"][self.motion_index:]
+        # Prefer dense (non-object) arrays if available to avoid slow pickle unmarshal in Kit.
+        if "real_dof_positions_padded" in data:
+            print("[MotionLoader] using dense padded arrays", flush=True)
+            self.dof_positions_list = []
+            self.dof_velocities_list = []
+            self.dof_target_pos_list = []
+            self.dof_torque_list = []
+            self.dof_positions = torch.as_tensor(data["real_dof_positions_padded"], dtype=torch.float32, device=self.device)
+            self.dof_velocities = torch.as_tensor(data["real_dof_velocities_padded"], dtype=torch.float32, device=self.device)
+            self.dof_target_pos = torch.as_tensor(data["real_dof_positions_cmd_padded"], dtype=torch.float32, device=self.device)
+            self.dof_torque = torch.as_tensor(data["real_dof_torques_padded"], dtype=torch.float32, device=self.device)
+            self.motion_num = self.dof_positions.shape[0]
+            max_len_timestep = self.dof_positions.shape[1]
+            self.motion_len = torch.as_tensor(data["motion_len"], dtype=torch.long, device=self.device)
+            if "sim_dof_positions_padded" in data:
+                self.sim_dof_positions = torch.as_tensor(data["sim_dof_positions_padded"], dtype=torch.float32, device=self.device)
+            else:
+                self.sim_dof_positions = None
+            print(f"[MotionLoader] motions={self.motion_num}, max_len={max_len_timestep}", flush=True)
         else:
-            self.sim_dof_positions_list = None
-        
-        # Total number of motions
-        self.motion_num = len(self.dof_positions_list)
-        # Maximum time length of motions
-        max_len_timestep = max(len(x) for x in self.dof_positions_list)
-        print(f"[MotionLoader] motions={self.motion_num}, max_len={max_len_timestep}", flush=True)
-        
-        # List of lengths for each motion
-        self.motion_len = []
-        for i in range(self.motion_num):
-            self.motion_len.append(self.dof_positions_list[i].shape[0])
-        self.motion_len = torch.tensor(self.motion_len, dtype=torch.long, device=self.device)
+            print("[MotionLoader] reading arrays...", flush=True)
+            t0 = time.time()
+            self.dof_positions_list = data["real_dof_positions"][self.motion_index:]
+            print(f"[MotionLoader] real_dof_positions loaded in {time.time() - t0:.3f}s", flush=True)
+            t0 = time.time()
+            self.dof_velocities_list = data["real_dof_velocities"][self.motion_index:]
+            print(f"[MotionLoader] real_dof_velocities loaded in {time.time() - t0:.3f}s", flush=True)
+            t0 = time.time()
+            self.dof_target_pos_list = data["real_dof_positions_cmd"][self.motion_index:]
+            print(f"[MotionLoader] real_dof_positions_cmd loaded in {time.time() - t0:.3f}s", flush=True)
+            t0 = time.time()
+            self.dof_torque_list = data["real_dof_torques"][self.motion_index:]
+            print(f"[MotionLoader] real_dof_torques loaded in {time.time() - t0:.3f}s", flush=True)
+            if 'sim_dof_positions' in data:
+                self.sim_dof_positions_list = data["sim_dof_positions"][self.motion_index:]
+            else:
+                self.sim_dof_positions_list = None
             
-        # Expand all motions to the same length and form a large tensor (build on CPU first)
-        cpu_device = torch.device("cpu")
-        self.dof_positions = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=cpu_device)
-        self.dof_velocities = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=cpu_device)
-        self.dof_target_pos = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=cpu_device)
-        self.dof_torque = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=cpu_device)
-        if self.sim_dof_positions_list is not None:
-            self.sim_dof_positions = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=cpu_device)
-        else:
-            self.sim_dof_positions = None
+            # Total number of motions
+            self.motion_num = len(self.dof_positions_list)
+            # Maximum time length of motions
+            max_len_timestep = max(len(x) for x in self.dof_positions_list)
+            print(f"[MotionLoader] motions={self.motion_num}, max_len={max_len_timestep}", flush=True)
+            
+            # List of lengths for each motion
+            self.motion_len = []
+            for i in range(self.motion_num):
+                self.motion_len.append(self.dof_positions_list[i].shape[0])
+            self.motion_len = torch.tensor(self.motion_len, dtype=torch.long, device=self.device)
+                
+            # Expand all motions to the same length and form a large tensor (build on CPU first)
+            cpu_device = torch.device("cpu")
+            self.dof_positions = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=cpu_device)
+            self.dof_velocities = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=cpu_device)
+            self.dof_target_pos = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=cpu_device)
+            self.dof_torque = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=cpu_device)
+            if self.sim_dof_positions_list is not None:
+                self.sim_dof_positions = torch.zeros((self.motion_num, max_len_timestep, self.num_dofs), dtype=torch.float32, device=cpu_device)
+            else:
+                self.sim_dof_positions = None
 
-        for i in range(self.motion_num):
-            pos = torch.as_tensor(self.dof_positions_list[i], dtype=torch.float32, device=cpu_device)
-            vel = torch.as_tensor(self.dof_velocities_list[i], dtype=torch.float32, device=cpu_device)
-            tgt = torch.as_tensor(self.dof_target_pos_list[i], dtype=torch.float32, device=cpu_device)
-            tq = torch.as_tensor(self.dof_torque_list[i], dtype=torch.float32, device=cpu_device)
+            for i in range(self.motion_num):
+                pos = torch.as_tensor(self.dof_positions_list[i], dtype=torch.float32, device=cpu_device)
+                vel = torch.as_tensor(self.dof_velocities_list[i], dtype=torch.float32, device=cpu_device)
+                tgt = torch.as_tensor(self.dof_target_pos_list[i], dtype=torch.float32, device=cpu_device)
+                tq = torch.as_tensor(self.dof_torque_list[i], dtype=torch.float32, device=cpu_device)
 
-            cur_len = pos.shape[0]
-            # import pdb; pdb.set_trace()
-            self.dof_positions[i, :cur_len, :] = pos
-            self.dof_velocities[i, :cur_len, :] = vel
-            self.dof_target_pos[i, :cur_len, :] = tgt
-            self.dof_torque[i, :cur_len, :] = tq   
-            if self.sim_dof_positions is not None and self.sim_dof_positions_list is not None:
-                sim = torch.from_numpy(self.sim_dof_positions_list[i].astype(np.float32)).float()
-                self.sim_dof_positions[i, 1:cur_len, :] = sim
-                # self.sim_dof_positions[i, 0, :] = sim[0]
-                # self.sim_dof_positions[i, :cur_len, :] = sim
-            if (i + 1) % 5 == 0 or (i + 1) == self.motion_num:
-                print(f"[MotionLoader] packed {i + 1}/{self.motion_num}", flush=True)
+                cur_len = pos.shape[0]
+                # import pdb; pdb.set_trace()
+                self.dof_positions[i, :cur_len, :] = pos
+                self.dof_velocities[i, :cur_len, :] = vel
+                self.dof_target_pos[i, :cur_len, :] = tgt
+                self.dof_torque[i, :cur_len, :] = tq   
+                if self.sim_dof_positions is not None and self.sim_dof_positions_list is not None:
+                    sim = torch.from_numpy(self.sim_dof_positions_list[i].astype(np.float32)).float()
+                    self.sim_dof_positions[i, 1:cur_len, :] = sim
+                    # self.sim_dof_positions[i, 0, :] = sim[0]
+                    # self.sim_dof_positions[i, :cur_len, :] = sim
+                if (i + 1) % 5 == 0 or (i + 1) == self.motion_num:
+                    print(f"[MotionLoader] packed {i + 1}/{self.motion_num}", flush=True)
 
-        # Move tensors to target device once to avoid repeated GPU transfers
-        if str(self.device) != "cpu":
-            self.dof_positions = self.dof_positions.to(self.device)
-            self.dof_velocities = self.dof_velocities.to(self.device)
-            self.dof_target_pos = self.dof_target_pos.to(self.device)
-            self.dof_torque = self.dof_torque.to(self.device)
-            if self.sim_dof_positions is not None:
-                self.sim_dof_positions = self.sim_dof_positions.to(self.device)
+            # Move tensors to target device once to avoid repeated GPU transfers
+            if str(self.device) != "cpu":
+                self.dof_positions = self.dof_positions.to(self.device)
+                self.dof_velocities = self.dof_velocities.to(self.device)
+                self.dof_target_pos = self.dof_target_pos.to(self.device)
+                self.dof_torque = self.dof_torque.to(self.device)
+                if self.sim_dof_positions is not None:
+                    self.sim_dof_positions = self.sim_dof_positions.to(self.device)
         
 
         self.joint_sequence = data["joint_sequence"]
