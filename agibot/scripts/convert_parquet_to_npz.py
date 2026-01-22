@@ -33,7 +33,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 # Reuse AGIBOT data extraction logic to avoid mismatches.
-from data_utils import DataLoader, frames_to_arrays, JointNameMapper
+from data_utils import DataLoader, frames_to_arrays, JointNameMapper, TimeAligner
 
 
 def parse_episode_indices(episode_arg: str, total_episodes: int) -> List[int]:
@@ -110,6 +110,12 @@ def main() -> int:
         default=None,
         help="Output .npz path (default: <dataset>/motion_agibot.npz)",
     )
+    parser.add_argument(
+        "--resample-fps",
+        type=float,
+        default=None,
+        help="If set, resample each episode to this fps using linear interpolation (e.g. 50).",
+    )
     args = parser.parse_args()
 
     dataset_path = Path(args.dataset)
@@ -145,6 +151,21 @@ def main() -> int:
         real_pos = arrays["real_joint_pos"].astype(np.float32)
         target_pos = arrays["target_joint_pos"].astype(np.float32)
 
+        if args.resample_fps is not None:
+            if args.resample_fps <= 0:
+                raise ValueError("--resample-fps must be positive")
+            dt = 1.0 / float(args.resample_fps)
+            t0 = float(timestamps[0])
+            t1 = float(timestamps[-1])
+            target_timestamps = np.arange(t0, t1 + dt * 0.5, dt, dtype=np.float64)
+            real_pos = TimeAligner.interpolate_to_target_timestamps(
+                timestamps, real_pos, target_timestamps
+            ).astype(np.float32)
+            target_pos = TimeAligner.interpolate_to_target_timestamps(
+                timestamps, target_pos, target_timestamps
+            ).astype(np.float32)
+            timestamps = target_timestamps
+
         if real_pos.shape[1] != num_dofs or target_pos.shape[1] != num_dofs:
             raise ValueError(
                 f"Episode {ep} DOF mismatch: real={real_pos.shape}, target={target_pos.shape}, expected {num_dofs}"
@@ -162,7 +183,12 @@ def main() -> int:
         velocities_list.append(vel)
         torques_list.append(torque)
 
-        print(f"[OK] Episode {ep}: frames={real_pos.shape[0]}")
+        if args.resample_fps is None:
+            print(f"[OK] Episode {ep}: frames={real_pos.shape[0]}")
+        else:
+            print(
+                f"[OK] Episode {ep}: frames={real_pos.shape[0]} (resampled to {args.resample_fps}Hz)"
+            )
 
     if not real_positions_list:
         raise RuntimeError("No valid episodes converted. Nothing to save.")
