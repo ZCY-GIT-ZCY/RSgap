@@ -7,6 +7,9 @@ import numpy as np
 import os
 import torch
 from typing import Optional
+import faulthandler
+import signal
+import time
 
 from .joint_names import ROBOT_JOINT_NAME_DICT_URDF_FOURIOR, ROBOT_BODY_JOINT_NAME_DICT
 
@@ -27,13 +30,22 @@ class MotionLoaderMotor:
             AssertionError: If the specified motion file doesn't exist.
         """
         assert os.path.isfile(motion_file), f"Invalid file path: {motion_file}"
+        # Enable traceback dumps for hangs (send SIGUSR1 to dump stacks)
+        faulthandler.enable()
+        try:
+            faulthandler.register(signal.SIGUSR1)
+        except Exception:
+            pass
+        faulthandler.dump_traceback_later(60, repeat=True)
         # Compatibility shim: some motion npz files were pickled with numpy 2.x
         # which references "numpy._core" during unpickle. Alias it to numpy.core.
         import sys
         if "numpy._core" not in sys.modules:
             sys.modules["numpy._core"] = np.core
+        print(f"[MotionLoader] np.load start: {motion_file}", flush=True)
+        t0 = time.time()
         data = np.load(motion_file, allow_pickle=True)
-        print(f"Loading motion data from {motion_file}...", flush=True)
+        print(f"[MotionLoader] np.load done in {time.time() - t0:.3f}s", flush=True)
 
         self.device = device
 
@@ -60,14 +72,18 @@ class MotionLoaderMotor:
 
         # type: List[ndarray]
         print("[MotionLoader] reading arrays...", flush=True)
+        t0 = time.time()
         self.dof_positions_list = data["real_dof_positions"][self.motion_index:]
-        print("[MotionLoader] real_dof_positions loaded", flush=True)
+        print(f"[MotionLoader] real_dof_positions loaded in {time.time() - t0:.3f}s", flush=True)
+        t0 = time.time()
         self.dof_velocities_list = data["real_dof_velocities"][self.motion_index:]
-        print("[MotionLoader] real_dof_velocities loaded", flush=True)
+        print(f"[MotionLoader] real_dof_velocities loaded in {time.time() - t0:.3f}s", flush=True)
+        t0 = time.time()
         self.dof_target_pos_list = data["real_dof_positions_cmd"][self.motion_index:]
-        print("[MotionLoader] real_dof_positions_cmd loaded", flush=True)
+        print(f"[MotionLoader] real_dof_positions_cmd loaded in {time.time() - t0:.3f}s", flush=True)
+        t0 = time.time()
         self.dof_torque_list = data["real_dof_torques"][self.motion_index:]
-        print("[MotionLoader] real_dof_torques loaded", flush=True)
+        print(f"[MotionLoader] real_dof_torques loaded in {time.time() - t0:.3f}s", flush=True)
         if 'sim_dof_positions' in data:
             self.sim_dof_positions_list = data["sim_dof_positions"][self.motion_index:]
         else:
