@@ -32,6 +32,12 @@ def main() -> int:
     parser.add_argument("--num-steps", type=int, default=200, help="Number of steps to run.")
     parser.add_argument("--motion-index", type=int, default=0, help="Fixed motion index to use.")
     parser.add_argument("--time-index", type=int, default=0, help="Fixed start time index to use.")
+    parser.add_argument("--warmup-steps", type=int, default=10, help="Warmup steps to skip from stats.")
+    parser.add_argument(
+        "--sync-to-motion",
+        action="store_true",
+        help="Before rollout, set robot joint states to motion real positions at the start frame.",
+    )
     # AppLauncher args (e.g., --headless, --device)
     AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
@@ -82,20 +88,35 @@ def main() -> int:
     motion_indices = torch.full((args.num_envs,), args.motion_index, dtype=torch.long, device=device)
     time_indices = torch.full((args.num_envs,), args.time_index, dtype=torch.long, device=device)
 
+    # Optionally sync robot joints to the motion pose at the start frame.
+    if args.sync_to_motion:
+        motion_pos = env_unwrapped._motion_loader.dof_positions[motion_indices, time_indices]
+        motion_vel = torch.zeros_like(motion_pos)
+        env_unwrapped.robot.write_joint_state_to_sim(
+            motion_pos, motion_vel, joint_ids=env_unwrapped.motion_joint_ids
+        )
+        env_unwrapped.robot.set_joint_position_target(
+            motion_pos, joint_ids=env_unwrapped.motion_joint_ids
+        )
+        env_unwrapped._raw_step_simulator()
+
     # Zero delta-action to directly follow motion targets.
     zero_action = torch.zeros((args.num_envs, num_actions), device=device)
 
     joint_err_means = []
     joint_err_maxs = []
 
-    for _ in range(args.num_steps):
+    per_joint_max = []
+    for step in range(args.num_steps):
         _, _, dones, info = env_unwrapped.step_operator(
             zero_action, motion_coords=(motion_indices, time_indices)
         )
         # info["episode"]["joint_pos_diff"] shape: (num_envs, num_dofs)
         joint_pos_diff = info["episode"]["joint_pos_diff"].detach().cpu().numpy()
-        joint_err_means.append(float(np.mean(joint_pos_diff)))
-        joint_err_maxs.append(float(np.max(joint_pos_diff)))
+        if step >= args.warmup_steps:
+            joint_err_means.append(float(np.mean(joint_pos_diff)))
+            joint_err_maxs.append(float(np.max(joint_pos_diff)))
+            per_joint_max.append(np.max(joint_pos_diff, axis=0))
 
         # advance time indices for the next step (mirror env internal logic)
         time_indices = time_indices + 1
@@ -103,9 +124,18 @@ def main() -> int:
             break
 
     print("Alignment check results:")
-    print(f"  steps: {len(joint_err_means)}")
-    print(f"  mean joint error (deg): {np.mean(joint_err_means):.4f}")
-    print(f"  max joint error (deg): {np.max(joint_err_maxs):.4f}")
+    print(f"  steps: {len(joint_err_means)} (warmup skipped: {args.warmup_steps})")
+    if joint_err_means:
+        print(f"  mean joint error (deg): {np.mean(joint_err_means):.4f}")
+        print(f"  max joint error (deg): {np.max(joint_err_maxs):.4f}")
+        per_joint_max = np.max(np.stack(per_joint_max, axis=0), axis=0)
+        dof_names = env_unwrapped._motion_loader.dof_names
+        top_idx = np.argsort(-per_joint_max)[:5]
+        print("  top max-error joints (deg):")
+        for idx in top_idx:
+            print(f"    {dof_names[idx]}: {per_joint_max[idx]:.4f}")
+    else:
+        print("  no stats collected (all steps were warmup)")
 
     env.close()
     simulation_app.close()
