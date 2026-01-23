@@ -49,6 +49,17 @@ def main() -> int:
         default="logs/diagnostics",
         help="Directory to save plots.",
     )
+    parser.add_argument(
+        "--plot-episode",
+        type=int,
+        default=None,
+        help="If set, override motion-index and plot the whole episode.",
+    )
+    parser.add_argument(
+        "--plot-all-joints",
+        action="store_true",
+        help="Plot all joints (useful with --plot-episode).",
+    )
     # AppLauncher args (e.g., --headless, --device)
     AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
@@ -96,7 +107,8 @@ def main() -> int:
     device = env_unwrapped.device
 
     # Initialize motion indices.
-    motion_indices = torch.full((args.num_envs,), args.motion_index, dtype=torch.long, device=device)
+    motion_index = args.motion_index if args.plot_episode is None else args.plot_episode
+    motion_indices = torch.full((args.num_envs,), motion_index, dtype=torch.long, device=device)
     time_indices = torch.full((args.num_envs,), args.time_index, dtype=torch.long, device=device)
 
     # Optionally sync robot joints to the motion pose at the start frame.
@@ -120,6 +132,11 @@ def main() -> int:
     real_traj = []
 
     per_joint_max = []
+    # If plotting full episode, override num_steps to the motion length.
+    if args.plot_episode is not None:
+        motion_len = int(env_unwrapped._motion_loader.motion_len[motion_index].item())
+        args.num_steps = motion_len
+
     for step in range(args.num_steps):
         _, _, dones, info = env_unwrapped.step_operator(
             zero_action, motion_coords=(motion_indices, time_indices)
@@ -156,10 +173,15 @@ def main() -> int:
             print(f"    {dof_names[idx]}: {per_joint_max[idx]:.4f}")
             if args.plot and sim_traj:
                 plot_dir = Path(args.plot_dir)
+                if args.plot_episode is not None:
+                    plot_dir = plot_dir / f"episode_{motion_index:06d}"
                 plot_dir.mkdir(parents=True, exist_ok=True)
                 sim_arr = np.stack(sim_traj, axis=0)
                 real_arr = np.stack(real_traj, axis=0)
-                top_idx = np.argsort(-per_joint_max)[: args.plot_topk]
+                if args.plot_all_joints:
+                    top_idx = np.arange(sim_arr.shape[1])
+                else:
+                    top_idx = np.argsort(-per_joint_max)[: args.plot_topk]
                 steps = np.arange(sim_arr.shape[0])
                 for idx in top_idx:
                     plt.figure(figsize=(8, 3))
