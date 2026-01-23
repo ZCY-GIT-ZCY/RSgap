@@ -186,28 +186,36 @@ def main() -> int:
                 sim_arr_deg = np.degrees(sim_arr)
                 real_arr_deg = np.degrees(real_arr)
                 for idx in top_idx:
-                    plt.figure(figsize=(8, 3))
                     sim_line = sim_arr_deg[:, idx]
                     real_line = real_arr_deg[:, idx]
-                    mean_err = float(np.mean(np.abs(sim_line - real_line)))
-                    plt.plot(steps, sim_line, label="sim")
-                    plt.plot(steps, real_line, label="real")
-                    plt.title(f"{dof_names[idx]} (deg)")
-                    plt.text(
+                    err_line = sim_line - real_line
+                    abs_err_line = np.abs(err_line)
+                    mean_err = float(np.mean(abs_err_line))
+
+                    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(8, 5), sharex=True)
+                    ax0.plot(steps, err_line, label="sim-real")
+                    ax0.axhline(0.0, color="gray", linewidth=0.8)
+                    ax0.set_title(f"{dof_names[idx]} (deg)")
+                    ax0.text(
                         0.01,
                         0.95,
                         f"mean |err|: {mean_err:.3f} deg",
-                        transform=plt.gca().transAxes,
+                        transform=ax0.transAxes,
                         va="top",
                         ha="left",
                     )
-                    plt.xlabel("step")
-                    plt.ylabel("position (deg)")
-                    plt.legend()
+                    ax0.set_ylabel("error (deg)")
+                    ax0.legend()
+
+                    ax1.plot(steps, abs_err_line, label="|error|")
+                    ax1.set_xlabel("step")
+                    ax1.set_ylabel("|error| (deg)")
+                    ax1.legend()
+
                     out_path = plot_dir / f"{dof_names[idx]}_traj.png"
-                    plt.tight_layout()
-                    plt.savefig(out_path)
-                    plt.close()
+                    fig.tight_layout()
+                    fig.savefig(out_path)
+                    plt.close(fig)
                 print(f"  plots saved to: {plot_dir}")
     else:
         print("  no stats collected (all steps were warmup)")
