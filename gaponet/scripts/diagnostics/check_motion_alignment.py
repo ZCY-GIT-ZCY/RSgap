@@ -183,13 +183,26 @@ def main() -> int:
                 else:
                     top_idx = np.argsort(-per_joint_max)[: args.plot_topk]
                 steps = np.arange(sim_arr.shape[0])
+                sim_arr_deg = np.degrees(sim_arr)
+                real_arr_deg = np.degrees(real_arr)
                 for idx in top_idx:
                     plt.figure(figsize=(8, 3))
-                    plt.plot(steps, sim_arr[:, idx], label="sim")
-                    plt.plot(steps, real_arr[:, idx], label="real")
-                    plt.title(f"{dof_names[idx]} (rad)")
+                    sim_line = sim_arr_deg[:, idx]
+                    real_line = real_arr_deg[:, idx]
+                    mean_err = float(np.mean(np.abs(sim_line - real_line)))
+                    plt.plot(steps, sim_line, label="sim")
+                    plt.plot(steps, real_line, label="real")
+                    plt.title(f"{dof_names[idx]} (deg)")
+                    plt.text(
+                        0.01,
+                        0.95,
+                        f"mean |err|: {mean_err:.3f} deg",
+                        transform=plt.gca().transAxes,
+                        va="top",
+                        ha="left",
+                    )
                     plt.xlabel("step")
-                    plt.ylabel("position")
+                    plt.ylabel("position (deg)")
                     plt.legend()
                     out_path = plot_dir / f"{dof_names[idx]}_traj.png"
                     plt.tight_layout()
