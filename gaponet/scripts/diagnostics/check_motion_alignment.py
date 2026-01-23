@@ -193,8 +193,8 @@ def main() -> int:
                     mean_err = float(np.mean(abs_err_line))
 
                     fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(8, 5), sharex=True)
-                    ax0.plot(steps, err_line, label="sim-real")
-                    ax0.axhline(0.0, color="gray", linewidth=0.8)
+                    ax0.plot(steps, sim_line, label="sim")
+                    ax0.plot(steps, real_line, label="real")
                     ax0.set_title(f"{dof_names[idx]} (deg)")
                     ax0.text(
                         0.01,
@@ -204,7 +204,7 @@ def main() -> int:
                         va="top",
                         ha="left",
                     )
-                    ax0.set_ylabel("error (deg)")
+                    ax0.set_ylabel("position (deg)")
                     ax0.legend()
 
                     ax1.plot(steps, abs_err_line, label="|error|")
