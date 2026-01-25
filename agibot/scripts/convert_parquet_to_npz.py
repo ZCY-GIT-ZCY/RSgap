@@ -116,6 +116,17 @@ def main() -> int:
         default=None,
         help="If set, resample each episode to this fps using linear interpolation (e.g. 50).",
     )
+    parser.add_argument(
+        "--use-payload",
+        action="store_true",
+        help="If set, write a constant payload mass for each episode.",
+    )
+    parser.add_argument(
+        "--payload-mass",
+        type=float,
+        default=0.0,
+        help="Payload mass (kg) to write when --use-payload is set (e.g. 0.05).",
+    )
     args = parser.parse_args()
 
     dataset_path = Path(args.dataset)
@@ -193,7 +204,12 @@ def main() -> int:
     if not real_positions_list:
         raise RuntimeError("No valid episodes converted. Nothing to save.")
 
-    payloads = np.zeros(len(real_positions_list), dtype=np.float32)
+    if args.use_payload:
+        if args.payload_mass < 0:
+            raise ValueError("--payload-mass must be non-negative")
+        payloads = np.full(len(real_positions_list), float(args.payload_mass), dtype=np.float32)
+    else:
+        payloads = np.zeros(len(real_positions_list), dtype=np.float32)
     motion_len = np.array([arr.shape[0] for arr in real_positions_list], dtype=np.int64)
     max_len = int(motion_len.max())
 
