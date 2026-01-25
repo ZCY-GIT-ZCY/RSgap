@@ -189,8 +189,8 @@ class HumanoidOperatorEnv(DirectRLEnv):
                 spawn=sim_utils.SphereCfg(
                     radius=0.02,
                     rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                        kinematic_enabled=False,
-                        disable_gravity=False,
+                        kinematic_enabled=True,
+                        disable_gravity=True,
                     ),
                 ),
             )
@@ -201,8 +201,8 @@ class HumanoidOperatorEnv(DirectRLEnv):
                 spawn=sim_utils.SphereCfg(
                     radius=0.02,
                     rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                        kinematic_enabled=False,
-                        disable_gravity=False,
+                        kinematic_enabled=True,
+                        disable_gravity=True,
                     ),
                 ),
             )
@@ -225,8 +225,6 @@ class HumanoidOperatorEnv(DirectRLEnv):
         attachments = [
             ("payload1", "gripper_l_base_link"),
             ("payload2", "gripper_r_base_link"),
-            ("payload3", "gripper_l_base_link"),
-            ("payload4", "gripper_r_base_link"),
         ]
 
         for payload_name, link_name in attachments:
@@ -245,7 +243,8 @@ class HumanoidOperatorEnv(DirectRLEnv):
                 fixed_joint = UsdPhysics.FixedJoint.Define(stage, joint_path)
                 fixed_joint.CreateBody0Rel().SetTargets([link_path])
                 fixed_joint.CreateBody1Rel().SetTargets([payload_path])
-                fixed_joint.CreateLocalPos0Attr(Gf.Vec3f(0.0, 0.0, 0.0))
+                # Offset payload forward to create a moment arm.
+                fixed_joint.CreateLocalPos0Attr(Gf.Vec3f(0.08, 0.0, 0.0))
                 fixed_joint.CreateLocalPos1Attr(Gf.Vec3f(0.0, 0.0, 0.0))
                 fixed_joint.CreateLocalRot0Attr(Gf.Quatf(1.0, 0.0, 0.0, 0.0))
                 fixed_joint.CreateLocalRot1Attr(Gf.Quatf(1.0, 0.0, 0.0, 0.0))
