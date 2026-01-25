@@ -13,6 +13,9 @@ import os
 from datetime import datetime
 
 import isaaclab.sim as sim_utils
+import isaacsim.core.utils.prims as prim_utils
+from isaacsim.core.utils.stage import get_current_stage
+from pxr import Gf, UsdPhysics
 from isaaclab.assets import Articulation, RigidObject, RigidObjectCfg
 from isaaclab.envs import DirectRLEnv
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
@@ -162,8 +165,8 @@ class HumanoidOperatorEnv(DirectRLEnv):
                 spawn=sim_utils.SphereCfg(
                     radius=0.02,
                     rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                        kinematic_enabled=True,
-                        disable_gravity=True,
+                        kinematic_enabled=False,
+                        disable_gravity=False,
                     ),
                 ),
             )
@@ -174,8 +177,8 @@ class HumanoidOperatorEnv(DirectRLEnv):
                 spawn=sim_utils.SphereCfg(
                     radius=0.02,
                     rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                        kinematic_enabled=True,
-                        disable_gravity=True,
+                        kinematic_enabled=False,
+                        disable_gravity=False,
                     ),
                 ),
             )
@@ -186,8 +189,8 @@ class HumanoidOperatorEnv(DirectRLEnv):
                 spawn=sim_utils.SphereCfg(
                     radius=0.02,
                     rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                        kinematic_enabled=True,
-                        disable_gravity=True,
+                        kinematic_enabled=False,
+                        disable_gravity=False,
                     ),
                 ),
             )
@@ -198,8 +201,8 @@ class HumanoidOperatorEnv(DirectRLEnv):
                 spawn=sim_utils.SphereCfg(
                     radius=0.02,
                     rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                        kinematic_enabled=True,
-                        disable_gravity=True,
+                        kinematic_enabled=False,
+                        disable_gravity=False,
                     ),
                 ),
             )
@@ -212,9 +215,40 @@ class HumanoidOperatorEnv(DirectRLEnv):
         self.scene.rigid_objects["payload2"] = self.payload2
         self.scene.rigid_objects["payload3"] = self.payload3
         self.scene.rigid_objects["payload4"] = self.payload4
+        self._attach_payload_fixed_joints()
         # add lights
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
+
+    def _attach_payload_fixed_joints(self) -> None:
+        stage = get_current_stage()
+        attachments = [
+            ("payload1", "gripper_l_base_link"),
+            ("payload2", "gripper_r_base_link"),
+            ("payload3", "gripper_l_base_link"),
+            ("payload4", "gripper_r_base_link"),
+        ]
+
+        for payload_name, link_name in attachments:
+            payload_paths = prim_utils.find_matching_prim_paths(f"/World/envs/env_*/{payload_name}")
+            for payload_path in payload_paths:
+                parts = payload_path.split("/")
+                if len(parts) < 4:
+                    continue
+                env_ns = "/".join(parts[:4])
+                link_path = f"{env_ns}/Robot/{link_name}"
+                if not prim_utils.is_prim_path_valid(link_path):
+                    continue
+                joint_path = f"{payload_path}/fixed_joint_to_{link_name}"
+                if prim_utils.is_prim_path_valid(joint_path):
+                    continue
+                fixed_joint = UsdPhysics.FixedJoint.Define(stage, joint_path)
+                fixed_joint.CreateBody0Rel().SetTargets([link_path])
+                fixed_joint.CreateBody1Rel().SetTargets([payload_path])
+                fixed_joint.CreateLocalPos0Attr(Gf.Vec3f(0.0, 0.0, 0.0))
+                fixed_joint.CreateLocalPos1Attr(Gf.Vec3f(0.0, 0.0, 0.0))
+                fixed_joint.CreateLocalRot0Attr(Gf.Quatf(1.0, 0.0, 0.0, 0.0))
+                fixed_joint.CreateLocalRot1Attr(Gf.Quatf(1.0, 0.0, 0.0, 0.0))
 
     def solve_fk(self, dof_positions: torch.Tensor):
         ret = self.robot_chain.forward_kinematics(dof_positions[:, self.joint_usd_to_fk_chain])
