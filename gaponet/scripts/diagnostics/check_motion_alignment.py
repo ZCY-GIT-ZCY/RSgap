@@ -289,23 +289,24 @@ def main() -> int:
         args.num_steps = motion_len
 
     for step in range(args.num_steps):
+        time_indices_step = time_indices.clone()
         _, _, dones, info = env_unwrapped.step_operator(
-            zero_action, motion_coords=(motion_indices, time_indices)
+            zero_action, motion_coords=(motion_indices, time_indices_step)
         )
-        # info["episode"]["joint_pos_diff"] shape: (num_envs, num_dofs)
-        joint_pos_diff = info["episode"]["joint_pos_diff"].detach().cpu().numpy()
-        if step >= args.warmup_steps:
-            joint_err_means.append(float(np.mean(joint_pos_diff)))
-            joint_err_maxs.append(float(np.max(joint_pos_diff)))
-            per_joint_max.append(np.max(joint_pos_diff, axis=0))
         # Collect trajectories for env 0 (full range for csv/regression).
         sim_pos = env_unwrapped.robot.data.joint_pos[:, env_unwrapped.motion_joint_ids].detach().cpu().numpy()
         real_pos = env_unwrapped._motion_loader.dof_positions[
-            env_unwrapped.motion_indices, env_unwrapped.time_indices
+            motion_indices, time_indices_step
         ].detach().cpu().numpy()
+        # Compute aligned error in degrees to match plotting units.
+        joint_pos_diff_deg = np.degrees(np.abs(sim_pos - real_pos))
+        if step >= args.warmup_steps:
+            joint_err_means.append(float(np.mean(joint_pos_diff_deg)))
+            joint_err_maxs.append(float(np.max(joint_pos_diff_deg)))
+            per_joint_max.append(np.max(joint_pos_diff_deg, axis=0))
         sim_traj.append(sim_pos[0])
         real_traj.append(real_pos[0])
-        time_idx_hist.append(int(env_unwrapped.time_indices[0].item()))
+        time_idx_hist.append(int(time_indices_step[0].item()))
 
         # advance time indices for the next step (mirror env internal logic)
         time_indices = time_indices + 1
@@ -384,7 +385,9 @@ def main() -> int:
 
         sim_arr = np.stack(sim_traj, axis=0)
         real_arr = np.stack(real_traj, axis=0)
-        err_arr = sim_arr - real_arr
+        sim_arr_deg = np.degrees(sim_arr)
+        real_arr_deg = np.degrees(real_arr)
+        err_arr = sim_arr_deg - real_arr_deg
         abs_err_arr = np.abs(err_arr)
 
         warmup = max(0, int(args.warmup_steps))
@@ -393,6 +396,8 @@ def main() -> int:
         valid_slice = slice(warmup, None)
         sim_arr = sim_arr[valid_slice]
         real_arr = real_arr[valid_slice]
+        sim_arr_deg = sim_arr_deg[valid_slice]
+        real_arr_deg = real_arr_deg[valid_slice]
         err_arr = err_arr[valid_slice]
         abs_err_arr = abs_err_arr[valid_slice]
         time_idx_hist = time_idx_hist[valid_slice]
@@ -444,7 +449,7 @@ def main() -> int:
         _write_csv(frame_rows, csv_dir / f"episode_{motion_index:06d}_frame_signals.csv")
 
         # Velocity / acceleration from real (aligned to target_ts)
-        v = np.gradient(real_arr, dt, axis=0)
+        v = np.gradient(real_arr_deg, dt, axis=0)
         a = np.gradient(v, dt, axis=0)
         v = np.abs(v)
         a = np.abs(a)
@@ -460,8 +465,8 @@ def main() -> int:
                         "timestamp": float(ts),
                         "joint_index": int(j),
                         "joint_name": str(dof_names[j]),
-                        "sim_pos": float(sim_arr[i, j]),
-                        "real_pos": float(real_arr[i, j]),
+                        "sim_pos": float(sim_arr_deg[i, j]),
+                        "real_pos": float(real_arr_deg[i, j]),
                         "err": float(err_arr[i, j]),
                         "abs_err": float(abs_err_arr[i, j]),
                         "real_vel_abs": float(v[i, j]),
