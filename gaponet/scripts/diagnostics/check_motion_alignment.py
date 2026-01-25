@@ -294,12 +294,12 @@ def main() -> int:
             zero_action, motion_coords=(motion_indices, time_indices_step)
         )
         # Collect trajectories for env 0 (full range for csv/regression).
-        # Use env-updated indices (post-step) to avoid drift vs. sim state.
+        # Sim state corresponds to targets at time_indices_step (pre-increment).
         motion_indices = env_unwrapped.motion_indices.clone()
         time_indices = env_unwrapped.time_indices.clone()
         sim_pos = env_unwrapped.robot.data.joint_pos[:, env_unwrapped.motion_joint_ids].detach().cpu().numpy()
         real_pos = env_unwrapped._motion_loader.dof_positions[
-            motion_indices, time_indices
+            motion_indices, time_indices_step
         ].detach().cpu().numpy()
         # Compute aligned error in degrees to match plotting units.
         joint_pos_diff_deg = np.degrees(np.abs(sim_pos - real_pos))
@@ -309,7 +309,7 @@ def main() -> int:
             per_joint_max.append(np.max(joint_pos_diff_deg, axis=0))
         sim_traj.append(sim_pos[0])
         real_traj.append(real_pos[0])
-        time_idx_hist.append(int(time_indices[0].item()))
+        time_idx_hist.append(int(time_indices_step[0].item()))
         if bool(torch.any(dones)):
             break
 
