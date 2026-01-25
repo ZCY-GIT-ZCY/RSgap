@@ -256,6 +256,23 @@ def main() -> int:
     num_actions = env_unwrapped.cfg.action_space
     device = env_unwrapped.device
 
+    # Report payload stats to verify motion file payloads were loaded.
+    payload_seq = getattr(env_unwrapped._motion_loader, "payload_sequence", None)
+    if payload_seq is None:
+        print("  payloads: missing (no payload_sequence in motion loader)")
+    else:
+        payload_np = payload_seq.detach().cpu().numpy().reshape(-1)
+        if payload_np.size == 0:
+            print("  payloads: empty")
+        else:
+            print(
+                "  payloads (kg): min={:.4f}, max={:.4f}, mean={:.4f}".format(
+                    float(np.min(payload_np)),
+                    float(np.max(payload_np)),
+                    float(np.mean(payload_np)),
+                )
+            )
+
     # Initialize motion indices.
     motion_index = args.motion_index if args.plot_episode is None else args.plot_episode
     motion_indices = torch.full((args.num_envs,), motion_index, dtype=torch.long, device=device)
