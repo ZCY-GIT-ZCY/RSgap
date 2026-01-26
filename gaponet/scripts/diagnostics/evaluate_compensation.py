@@ -292,25 +292,26 @@ def main() -> int:
 
     for _ in range(num_steps):
         time_indices_step = time_indices.clone()
-        with torch.inference_mode():
-            if use_model_sensor:
+        if use_model_sensor:
+            with torch.inference_mode():
                 model_obs = env_comp_unwrapped.compute_model_observation(add_noise=False).to(device)
                 sensor_data = ppo_runner.alg.policy.model_sensor(model_obs).reshape(
                     env_comp_unwrapped.num_envs, env_comp_unwrapped.num_sensor_positions, -1
                 )
-                env_comp_unwrapped.set_sensor_data(sensor_data)
-            else:
-                joint_pos = env_comp_unwrapped.robot.data.joint_pos[:, env_comp_unwrapped.motion_joint_ids]
-                joint_vel = env_comp_unwrapped.robot.data.joint_vel[:, env_comp_unwrapped.motion_joint_ids]
-                sensor = torch.cat([joint_pos, joint_vel * env_comp_unwrapped.step_dt], dim=1)
-                if env_comp_unwrapped.cfg.delta_sensor_value:
-                    prev = torch.cat([prev_joint_pos, prev_joint_vel * env_comp_unwrapped.step_dt], dim=1)
-                    sensor = sensor - prev
-                sensor = sensor.view(
-                    env_comp_unwrapped.num_envs, env_comp_unwrapped.num_sensor_positions, env_comp_unwrapped.cfg.sensor_dim
-                )
-                env_comp_unwrapped.set_sensor_data(sensor)
+            env_comp_unwrapped.set_sensor_data(sensor_data)
+        else:
+            joint_pos = env_comp_unwrapped.robot.data.joint_pos[:, env_comp_unwrapped.motion_joint_ids]
+            joint_vel = env_comp_unwrapped.robot.data.joint_vel[:, env_comp_unwrapped.motion_joint_ids]
+            sensor = torch.cat([joint_pos, joint_vel * env_comp_unwrapped.step_dt], dim=1)
+            if env_comp_unwrapped.cfg.delta_sensor_value:
+                prev = torch.cat([prev_joint_pos, prev_joint_vel * env_comp_unwrapped.step_dt], dim=1)
+                sensor = sensor - prev
+            sensor = sensor.view(
+                env_comp_unwrapped.num_envs, env_comp_unwrapped.num_sensor_positions, env_comp_unwrapped.cfg.sensor_dim
+            )
+            env_comp_unwrapped.set_sensor_data(sensor)
 
+        with torch.inference_mode():
             obs_dict = env_comp_unwrapped.compute_operator_observation()
             obs = torch.cat([obs_dict["branch"], obs_dict["trunk"]], dim=1)
             actions = policy(obs)
