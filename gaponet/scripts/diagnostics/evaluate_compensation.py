@@ -132,8 +132,13 @@ def main() -> int:
         sys.modules["sim2real"] = sim2real_pkg
     elif not hasattr(sys.modules["sim2real"], "__path__"):
         sys.modules["sim2real"].__path__ = [str(source_root / "sim2real")]
+    tasks_pkg_path = source_root / "sim2real" / "sim2real" / "tasks"
     if "sim2real.tasks" not in sys.modules:
-        sys.modules["sim2real.tasks"] = types.ModuleType("sim2real.tasks")
+        tasks_pkg = types.ModuleType("sim2real.tasks")
+        tasks_pkg.__path__ = [str(tasks_pkg_path)]
+        sys.modules["sim2real.tasks"] = tasks_pkg
+    elif not hasattr(sys.modules["sim2real.tasks"], "__path__"):
+        sys.modules["sim2real.tasks"].__path__ = [str(tasks_pkg_path)]
 
     spec = importlib.util.spec_from_file_location("sim2real.tasks.humanoid_agibot", tasks_init)
     if spec is None or spec.loader is None:
