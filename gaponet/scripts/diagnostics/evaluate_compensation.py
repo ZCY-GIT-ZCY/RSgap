@@ -293,7 +293,7 @@ def main() -> int:
     for _ in range(num_steps):
         time_indices_step = time_indices.clone()
         if use_model_sensor:
-            with torch.inference_mode():
+            with torch.no_grad():
                 model_obs = env_comp_unwrapped.compute_model_observation(add_noise=False).to(device)
                 sensor_data = ppo_runner.alg.policy.model_sensor(model_obs).reshape(
                     env_comp_unwrapped.num_envs, env_comp_unwrapped.num_sensor_positions, -1
@@ -311,7 +311,7 @@ def main() -> int:
             )
             env_comp_unwrapped.set_sensor_data(sensor)
 
-        with torch.inference_mode():
+        with torch.no_grad():
             obs_dict = env_comp_unwrapped.compute_operator_observation()
             obs = torch.cat([obs_dict["branch"], obs_dict["trunk"]], dim=1)
             actions = policy(obs)
