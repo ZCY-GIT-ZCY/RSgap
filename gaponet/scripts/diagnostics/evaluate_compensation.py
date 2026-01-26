@@ -112,9 +112,11 @@ def main() -> int:
     # -------------------------------------------------------------------------
     # Import tasks and env config (similar to check_motion_alignment logic)
     # -------------------------------------------------------------------------
+    source_root = Path(__file__).resolve().parents[2] / "source"
+    sys.path.append(str(source_root))
+
     tasks_init = (
-        Path(__file__).resolve().parents[2]
-        / "source"
+        source_root
         / "sim2real"
         / "sim2real"
         / "tasks"
@@ -125,7 +127,11 @@ def main() -> int:
         raise RuntimeError(f"Task module not found: {tasks_init}")
 
     if "sim2real" not in sys.modules:
-        sys.modules["sim2real"] = types.ModuleType("sim2real")
+        sim2real_pkg = types.ModuleType("sim2real")
+        sim2real_pkg.__path__ = [str(source_root / "sim2real")]
+        sys.modules["sim2real"] = sim2real_pkg
+    elif not hasattr(sys.modules["sim2real"], "__path__"):
+        sys.modules["sim2real"].__path__ = [str(source_root / "sim2real")]
     if "sim2real.tasks" not in sys.modules:
         sys.modules["sim2real.tasks"] = types.ModuleType("sim2real.tasks")
 
