@@ -261,6 +261,7 @@ class OperatorRunner(OnPolicyRunner):
         replay_buffer = []
         rewbuffer = deque(maxlen=100)
         lenbuffer = deque(maxlen=100)
+        abs_err_buffer = deque(maxlen=100)
         cur_reward_sum = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
         cur_episode_length = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
 
@@ -363,6 +364,11 @@ class OperatorRunner(OnPolicyRunner):
                         if self.log_dir is not None:
                             if "episode" in infos:
                                 ep_infos.append(infos["episode"])
+                                if "Train/mean_abs_pos_err" in infos["episode"]:
+                                    val = infos["episode"]["Train/mean_abs_pos_err"]
+                                    if isinstance(val, torch.Tensor):
+                                        val = val.detach().mean().item()
+                                    abs_err_buffer.append(float(val))
                             elif "log" in infos:
                                 ep_infos.append(infos["log"])
                             # Update rewards
@@ -489,20 +495,17 @@ class OperatorRunner(OnPolicyRunner):
         self.writer.add_scalar("Perf/learning_time", locs["learn_time"], locs["it"])
 
         # -- Training
+        if len(locs.get("abs_err_buffer", [])) > 0:
+            self.writer.add_scalar(
+                "Train/mean_abs_pos_err",
+                statistics.mean(locs["abs_err_buffer"]),
+                locs["it"],
+            )
+
         if len(locs["rewbuffer"]) > 0:
             # everything else
             self.writer.add_scalar("Train/mean_reward", statistics.mean(locs["rewbuffer"]), locs["it"])
             self.writer.add_scalar("Train/mean_episode_length", statistics.mean(locs["lenbuffer"]), locs["it"])
-            if locs.get("ep_infos"):
-                abs_err_vals = []
-                for ep_info in locs["ep_infos"]:
-                    if "Train/mean_abs_pos_err" in ep_info:
-                        val = ep_info["Train/mean_abs_pos_err"]
-                        if isinstance(val, torch.Tensor):
-                            val = val.detach().mean().item()
-                        abs_err_vals.append(float(val))
-                if abs_err_vals:
-                    self.writer.add_scalar("Train/mean_abs_pos_err", statistics.mean(abs_err_vals), locs["it"])
             if self.logger_type != "wandb":  # wandb does not support non-integer x-axis logging
                 self.writer.add_scalar("Train/mean_reward/time", statistics.mean(locs["rewbuffer"]), self.tot_time)
                 self.writer.add_scalar(
