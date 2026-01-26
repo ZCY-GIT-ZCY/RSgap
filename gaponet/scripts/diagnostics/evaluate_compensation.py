@@ -276,6 +276,7 @@ def main() -> int:
     ppo_runner = OnPolicyRunner(env_wrapped, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
     ppo_runner.load(resume_path)
     policy = ppo_runner.get_inference_policy(device=device)
+    use_model_sensor = bool(getattr(agent_cfg, "model_based_sensor", False))
 
     motion_indices = torch.full((args.num_envs,), args.motion_index, dtype=torch.long, device=device)
     time_indices = torch.full((args.num_envs,), args.time_index, dtype=torch.long, device=device)
@@ -286,11 +287,30 @@ def main() -> int:
         env_comp_unwrapped.model_history[:] = 0
 
     sim_comp_traj = []
+    prev_joint_pos = env_comp_unwrapped.robot.data.joint_pos[:, env_comp_unwrapped.motion_joint_ids].clone()
+    prev_joint_vel = env_comp_unwrapped.robot.data.joint_vel[:, env_comp_unwrapped.motion_joint_ids].clone()
 
     for _ in range(num_steps):
         time_indices_step = time_indices.clone()
         with torch.inference_mode():
-            _update_sensor_data_from_sim(env_comp_unwrapped)
+            if use_model_sensor:
+                model_obs = env_comp_unwrapped.compute_model_observation(add_noise=False).to(device)
+                sensor_data = ppo_runner.alg.policy.model_sensor(model_obs).reshape(
+                    env_comp_unwrapped.num_envs, env_comp_unwrapped.num_sensor_positions, -1
+                )
+                env_comp_unwrapped.set_sensor_data(sensor_data)
+            else:
+                joint_pos = env_comp_unwrapped.robot.data.joint_pos[:, env_comp_unwrapped.motion_joint_ids]
+                joint_vel = env_comp_unwrapped.robot.data.joint_vel[:, env_comp_unwrapped.motion_joint_ids]
+                sensor = torch.cat([joint_pos, joint_vel * env_comp_unwrapped.step_dt], dim=1)
+                if env_comp_unwrapped.cfg.delta_sensor_value:
+                    prev = torch.cat([prev_joint_pos, prev_joint_vel * env_comp_unwrapped.step_dt], dim=1)
+                    sensor = sensor - prev
+                sensor = sensor.view(
+                    env_comp_unwrapped.num_envs, env_comp_unwrapped.num_sensor_positions, env_comp_unwrapped.cfg.sensor_dim
+                )
+                env_comp_unwrapped.set_sensor_data(sensor)
+
             obs_dict = env_comp_unwrapped.compute_operator_observation()
             obs = torch.cat([obs_dict["branch"], obs_dict["trunk"]], dim=1)
             actions = policy(obs)
@@ -304,6 +324,9 @@ def main() -> int:
 
         sim_pos = env_comp_unwrapped.robot.data.joint_pos[:, env_comp_unwrapped.motion_joint_ids].detach().cpu().numpy()
         sim_comp_traj.append(sim_pos[0])
+
+        prev_joint_pos = env_comp_unwrapped.robot.data.joint_pos[:, env_comp_unwrapped.motion_joint_ids].clone()
+        prev_joint_vel = env_comp_unwrapped.robot.data.joint_vel[:, env_comp_unwrapped.motion_joint_ids].clone()
 
         if bool(torch.any(dones)):
             break

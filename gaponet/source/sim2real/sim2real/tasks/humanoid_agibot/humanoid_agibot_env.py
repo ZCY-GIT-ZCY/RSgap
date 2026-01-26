@@ -472,8 +472,15 @@ class HumanoidOperatorEnv(DirectRLEnv):
             "critic": operator_obs["critic"],
         }
 
-    def _get_rewards(self) -> torch.Tensor:
-        return - ((36 / (2 * torch.pi)) ** 2) * self._reward_tracking()# - 0.1 * self._reward_delta_smoothness()
+    def _get_rewards(
+        self,
+        motion_indices: torch.Tensor | None = None,
+        time_indices: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        return - ((36 / (2 * torch.pi)) ** 2) * self._reward_tracking(
+            motion_indices=motion_indices,
+            time_indices=time_indices,
+        )
     
     def _set_wrist_payload_mass(self):
         set_masses(self.payload1, self.wrist_payload_mass, self.payload1._ALL_INDICES) # type: ignore
@@ -955,7 +962,8 @@ class HumanoidOperatorEnv(DirectRLEnv):
             self.motion_indices[:], self.time_indices[:] = motion_coords
         self.delta_action[:] = delta_action
 
-        self.apply_action[:] = self._motion_loader.dof_target_pos[self.motion_indices, self.time_indices]
+        time_indices_step = self.time_indices.clone()
+        self.apply_action[:] = self._motion_loader.dof_target_pos[self.motion_indices, time_indices_step]
         self.apply_action[:, self._motion_loader.joint_sequence_index] += self.delta_action
         self.robot.set_joint_position_target(self.apply_action, joint_ids=self.motion_joint_ids)
 
@@ -964,7 +972,7 @@ class HumanoidOperatorEnv(DirectRLEnv):
         unfinished_motion = self._motion_loader.motion_len[self.motion_indices] > (self.time_indices + 1)
         self.time_indices[unfinished_motion] += 1
 
-        rewards = self._get_rewards()
+        rewards = self._get_rewards(motion_indices=self.motion_indices, time_indices=time_indices_step)
         rewards = rewards * unfinished_motion
         dones = ~unfinished_motion
 
@@ -973,11 +981,11 @@ class HumanoidOperatorEnv(DirectRLEnv):
         self.last_delta_action[:] = self.delta_action
         return None, rewards, dones, {'episode': {
             'joint_pos_diff': torch.abs(
-                self._motion_loader.dof_positions[self.motion_indices, self.time_indices]
+                self._motion_loader.dof_positions[self.motion_indices, time_indices_step]
                 - self.robot.data.joint_pos[:, self.motion_joint_ids]
             ) * (360 / 6.28),
             'joint_vel_diff': torch.abs(
-                self._motion_loader.dof_velocities[self.motion_indices, self.time_indices]
+                self._motion_loader.dof_velocities[self.motion_indices, time_indices_step]
                 - self.robot.data.joint_vel[:, self.motion_joint_ids]
             ) * (360 / 6.28),
         }}
@@ -1107,14 +1115,22 @@ class HumanoidOperatorEnv(DirectRLEnv):
                 "sensor": self.sub_env_sensor_data.clone()
             }
     # ------------------------------------ reward functions ------------------------------------
-    def _reward_tracking(self):
+    def _reward_tracking(
+        self,
+        motion_indices: torch.Tensor | None = None,
+        time_indices: torch.Tensor | None = None,
+    ):
         # robot current state (motion joints only)
         robot_dof_positions = self.robot.data.joint_pos[:, self.motion_joint_ids]     # shape: (num_envs, num_dofs)
         robot_dof_velocities = self.robot.data.joint_vel[:, self.motion_joint_ids]    # shape: (num_envs, num_dofs)
 
         # sampled state from MotionLoader
-        real_dof_positions = self._motion_loader.dof_positions[self.motion_indices, self.time_indices]   # shape: (num_envs, num_dofs)
-        real_dof_velocities = self._motion_loader.dof_velocities[self.motion_indices, self.time_indices] # shape: (num_envs, num_dofs)
+        if motion_indices is None:
+            motion_indices = self.motion_indices
+        if time_indices is None:
+            time_indices = self.time_indices
+        real_dof_positions = self._motion_loader.dof_positions[motion_indices, time_indices]   # shape: (num_envs, num_dofs)
+        real_dof_velocities = self._motion_loader.dof_velocities[motion_indices, time_indices] # shape: (num_envs, num_dofs)
         
         joint_index = self._motion_loader.joint_sequence_index   # shape: (10,)
 
