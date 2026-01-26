@@ -32,54 +32,6 @@ except ImportError:
     print(f"Warning: Could not import cli_args from {rsl_rl_script_dir}. Some arguments might be missing.")
     cli_args = None
 
-from rsl_rl.runners import OnPolicyRunner
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
-# import isaaclab_tasks
-from isaaclab_tasks.utils import get_checkpoint_path, parse_env_cfg
-from isaaclab.utils.assets import retrieve_file_path
-from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Evaluate GAPOnet compensation performance.")
-    
-    # Task and Environment args
-    parser.add_argument(
-        "--task",
-        type=str,
-        default="Isaac-Humanoid-AGIBOT-Delta-Action",
-        help="Gym task id to run.",
-    )
-    parser.add_argument("--num-envs", type=int, default=1, help="Number of envs to create.")
-    
-    # Motion selection args
-    parser.add_argument("--motion-index", type=int, default=0, help="Fixed motion index to use.")
-    parser.add_argument("--time-index", type=int, default=0, help="Fixed start time index to use.")
-    parser.add_argument("--motion-file", type=str, default=None, help="Override motion file path.")
-    
-    # Simulation args
-    parser.add_argument(
-        "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
-    )
-    
-    # Checkpoint args
-    parser.add_argument(
-        "--use_pretrained_checkpoint",
-        action="store_true",
-        help="Use the pre-trained checkpoint from Nucleus.",
-    )
-    
-    # Plotting args
-    parser.add_argument(
-        "--plot-dir",
-        type=str,
-        default="logs/train_result",
-        help="Directory to save plots.",
-    )
-    
-    # Add RSL-RL args
-    if cli_args:
-        cli_args.add_rsl_rl_args(parser)
-    
     # Add AppLauncher args
     AppLauncher.add_app_launcher_args(parser)
     
@@ -88,6 +40,16 @@ def main() -> int:
     # Launch Isaac Sim
     app_launcher = AppLauncher(args)
     simulation_app = app_launcher.app
+
+    # -------------------------------------------------------------------------
+    # Import Isaac Sim dependent modules (MUST be after AppLauncher)
+    # -------------------------------------------------------------------------
+    from rsl_rl.runners import OnPolicyRunner
+    from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
+    # import isaaclab_tasks
+    from isaaclab_tasks.utils import get_checkpoint_path, parse_env_cfg
+    from isaaclab.utils.assets import retrieve_file_path
+    from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 
     # -------------------------------------------------------------------------
     # Import tasks and env config (similar to check_motion_alignment logic to be safe)
