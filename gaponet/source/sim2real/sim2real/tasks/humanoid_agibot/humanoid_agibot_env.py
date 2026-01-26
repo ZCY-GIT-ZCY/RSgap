@@ -988,7 +988,7 @@ class HumanoidOperatorEnv(DirectRLEnv):
                 self._motion_loader.dof_velocities[self.motion_indices, time_indices_step]
                 - self.robot.data.joint_vel[:, self.motion_joint_ids]
             ) * (360 / 6.28),
-            'train/mean_abs_pos_err': torch.mean(
+            'Train/mean_abs_pos_err': torch.mean(
                 torch.abs(
                     self._motion_loader.dof_positions[self.motion_indices, time_indices_step]
                     - self.robot.data.joint_pos[:, self.motion_joint_ids]

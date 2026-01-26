@@ -462,6 +462,8 @@ class OperatorRunner(OnPolicyRunner):
                         ep_info[key] = ep_info[key].unsqueeze(0)
                     infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
                 value = torch.mean(infotensor)
+                if isinstance(value, torch.Tensor):
+                    value = value.item()
                 # log to logger and terminal
                 if "/" in key:
                     self.writer.add_scalar(key, value, locs["it"])
