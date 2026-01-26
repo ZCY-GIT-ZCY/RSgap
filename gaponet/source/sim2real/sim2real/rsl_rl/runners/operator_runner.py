@@ -493,6 +493,16 @@ class OperatorRunner(OnPolicyRunner):
             # everything else
             self.writer.add_scalar("Train/mean_reward", statistics.mean(locs["rewbuffer"]), locs["it"])
             self.writer.add_scalar("Train/mean_episode_length", statistics.mean(locs["lenbuffer"]), locs["it"])
+            if locs.get("ep_infos"):
+                abs_err_vals = []
+                for ep_info in locs["ep_infos"]:
+                    if "Train/mean_abs_pos_err" in ep_info:
+                        val = ep_info["Train/mean_abs_pos_err"]
+                        if isinstance(val, torch.Tensor):
+                            val = val.detach().mean().item()
+                        abs_err_vals.append(float(val))
+                if abs_err_vals:
+                    self.writer.add_scalar("Train/mean_abs_pos_err", statistics.mean(abs_err_vals), locs["it"])
             if self.logger_type != "wandb":  # wandb does not support non-integer x-axis logging
                 self.writer.add_scalar("Train/mean_reward/time", statistics.mean(locs["rewbuffer"]), self.tot_time)
                 self.writer.add_scalar(
