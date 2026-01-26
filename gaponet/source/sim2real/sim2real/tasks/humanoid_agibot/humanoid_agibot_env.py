@@ -991,7 +991,7 @@ class HumanoidOperatorEnv(DirectRLEnv):
         }}
 
 
-    def compute_model_observation(self, add_noise: bool = False) -> torch.Tensor:
+    def compute_model_observation(self, add_noise: bool = False, update_history: bool = True) -> torch.Tensor:
         joint_pos = self.robot.data.joint_pos[:, self.motion_joint_ids]
         joint_vel = self.robot.data.joint_vel[:, self.motion_joint_ids]
         joint_target = self.robot.data.joint_pos_target[:, self.motion_joint_ids]
@@ -1004,8 +1004,9 @@ class HumanoidOperatorEnv(DirectRLEnv):
             model_obs = torch.cat([joint_pos, joint_vel, payload_mass], dim=1).clone()
         else:
             model_obs = torch.cat([joint_pos, self.model_history.flatten(1, 2)], dim=1).clone()
-            self.model_history = self.model_history.roll(1, dims=1)
-            self.model_history[:, 0, :] = torch.cat([joint_pos, joint_vel, joint_target], dim=1).clone()
+            if update_history:
+                self.model_history = self.model_history.roll(1, dims=1)
+                self.model_history[:, 0, :] = torch.cat([joint_pos, joint_vel, joint_target], dim=1).clone()
         # import pdb; pdb.set_trace()
 
         if self.add_noise and add_noise:

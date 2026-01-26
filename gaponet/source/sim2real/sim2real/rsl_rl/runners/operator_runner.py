@@ -317,7 +317,9 @@ class OperatorRunner(OnPolicyRunner):
                         self.env.sample_all_environments(min_available_length=num_steps_per_function)
                     
                     if self.model_based_sensor:
-                        sensor_data = self.sensor_model(self.env.compute_model_observation().to(self.device)).reshape(self.env.num_envs, self.env.num_sensor_positions, -1)
+                        sensor_data = self.sensor_model(
+                            self.env.compute_model_observation(update_history=False).to(self.device)
+                        ).reshape(self.env.num_envs, self.env.num_sensor_positions, -1)
                         self.env.set_sensor_data(sensor_data.to(self.env.device))
                     
                     if not 'obs' in locals() or not self.full_trajectory_sampling:
@@ -333,7 +335,9 @@ class OperatorRunner(OnPolicyRunner):
                         obs, rewards, dones, infos = self.env.step_operator(actions.to(self.env.device), # type: ignore
                                                                             motion_coords if not self.model_based_sensor else None) 
                         if self.model_based_sensor:
-                            sensor_data = self.sensor_model(self.env.compute_model_observation().to(self.device)).reshape(self.env.num_envs, self.env.num_sensor_positions, -1)
+                            sensor_data = self.sensor_model(
+                                self.env.compute_model_observation(update_history=True).to(self.device)
+                            ).reshape(self.env.num_envs, self.env.num_sensor_positions, -1)
                             self.env.set_sensor_data(sensor_data.to(self.env.device))
                         observation = self.env.compute_operator_observation()
 
