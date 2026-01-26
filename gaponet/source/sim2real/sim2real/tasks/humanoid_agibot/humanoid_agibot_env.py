@@ -477,6 +477,16 @@ class HumanoidOperatorEnv(DirectRLEnv):
         motion_indices: torch.Tensor | None = None,
         time_indices: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        if motion_indices is None:
+            motion_indices = self.motion_indices
+        if time_indices is None:
+            time_indices = self.time_indices
+
+        real_dof_positions = self._motion_loader.dof_positions[motion_indices, time_indices]
+        robot_dof_positions = self.robot.data.joint_pos[:, self.motion_joint_ids]
+        mean_abs_pos_err = torch.mean(torch.abs(real_dof_positions - robot_dof_positions), dim=1)
+        self.extras["log"] = {"Train/mean_abs_pos_err": mean_abs_pos_err}
+
         return - ((36 / (2 * torch.pi)) ** 2) * self._reward_tracking(
             motion_indices=motion_indices,
             time_indices=time_indices,

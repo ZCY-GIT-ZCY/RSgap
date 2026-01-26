@@ -398,6 +398,8 @@ class OperatorRunner(OnPolicyRunner):
             stop = time.time()
             learn_time = stop - start
             self.current_learning_iteration = it
+            if self.log_dir is not None and not self.disable_logs and len(abs_err_buffer) > 0:
+                self.writer.add_scalar("Train/mean_abs_pos_err", statistics.mean(abs_err_buffer), it)
             # log info
             if self.log_dir is not None and not self.disable_logs:
                 # Log information
