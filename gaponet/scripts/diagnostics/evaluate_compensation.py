@@ -315,8 +315,12 @@ def main() -> int:
 
     plot_dir = Path(args.plot_dir) / f"episode{args.motion_index:03d}"
     plot_dir.mkdir(parents=True, exist_ok=True)
+    plot_dir = plot_dir.resolve()
 
     print(f"[INFO] Saving plots to: {plot_dir}")
+
+    if min_len == 0:
+        raise RuntimeError("No trajectory data collected; cannot generate plots.")
 
     for idx in range(joint_count):
         name = dof_names[idx]
