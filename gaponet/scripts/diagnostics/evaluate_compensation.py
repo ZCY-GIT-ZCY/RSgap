@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import os
 import sys
 from pathlib import Path
@@ -66,11 +67,18 @@ def main() -> int:
     parser.add_argument("--motion-index", type=int, default=0, help="Fixed motion index to use.")
     parser.add_argument("--time-index", type=int, default=0, help="Fixed start time index to use.")
     parser.add_argument("--motion-file", type=str, default=None, help="Override motion file path.")
-    parser.add_argument("--num-steps", type=int, default=None, help="Number of steps to simulate.")
+    parser.add_argument("--num-steps", type=int, default=200, help="Number of steps to simulate.")
+    parser.add_argument("--full-episode", action="store_true", help="Override num-steps to the full episode length.")
 
     # Simulation args
     parser.add_argument(
         "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
+    )
+    parser.add_argument(
+        "--hang-timeout",
+        type=int,
+        default=600,
+        help="Seconds before dumping traceback for long-running steps; 0 disables.",
     )
 
     # Checkpoint args
@@ -96,6 +104,12 @@ def main() -> int:
     AppLauncher.add_app_launcher_args(parser)
 
     args = parser.parse_args()
+
+    # Configure hang traceback timeout (faulthandler)
+    if args.hang_timeout <= 0:
+        faulthandler.cancel_dump_traceback_later()
+    else:
+        faulthandler.dump_traceback_later(args.hang_timeout, repeat=True)
 
     # Launch Isaac Sim
     app_launcher = AppLauncher(args)
@@ -186,15 +200,18 @@ def main() -> int:
         print(f"[INFO] Overriding motion file with: {args.motion_file}")
 
     # -------------------------------------------------------------------------
-    # Phase 1: Run Baseline Simulation (No Compensation)
+    # Create environment (reuse for baseline + compensation)
     # -------------------------------------------------------------------------
-    env_base = gym.make(args.task, cfg=env_cfg, render_mode=None)
-    env_unwrapped = env_base.unwrapped
+    env = gym.make(args.task, cfg=env_cfg, render_mode=None)
+    env_unwrapped = env.unwrapped
     device = env_unwrapped.device
     num_actions = env_unwrapped.cfg.action_space
 
     motion_len = int(env_unwrapped._motion_loader.motion_len[args.motion_index].item())
-    num_steps = motion_len if args.num_steps is None else min(args.num_steps, motion_len)
+    if args.full_episode:
+        num_steps = motion_len
+    else:
+        num_steps = min(int(args.num_steps), motion_len)
 
     print(f"[INFO] Environment created. Device: {device}, Num Envs: {args.num_envs}")
     print(f"[INFO] Motion Index: {args.motion_index}, Length: {motion_len}, Steps: {num_steps}")
@@ -232,7 +249,6 @@ def main() -> int:
     real_arr = np.stack(real_traj, axis=0)
 
     print(f"[INFO] Baseline simulation complete. Steps: {len(sim_baseline_traj)}")
-    env_base.close()
 
     # -------------------------------------------------------------------------
     # Phase 2: Run Compensated Simulation (With GAPOnet)
@@ -254,9 +270,8 @@ def main() -> int:
 
     print(f"[INFO] Loading model checkpoint from: {resume_path}")
 
-    env_comp = gym.make(args.task, cfg=env_cfg, render_mode=None)
-    env_comp_unwrapped = env_comp.unwrapped
-    env_wrapped = RslRlVecEnvWrapper(env_comp)
+    env_comp_unwrapped = env_unwrapped
+    env_wrapped = RslRlVecEnvWrapper(env)
 
     ppo_runner = OnPolicyRunner(env_wrapped, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
     ppo_runner.load(resume_path)
@@ -349,7 +364,7 @@ def main() -> int:
 
     print("[INFO] Done.")
 
-    env_comp.close()
+    env.close()
     simulation_app.close()
     return 0
 
