@@ -49,7 +49,7 @@ class HumanoidOperatorRunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_function = 1
 
     max_iterations = 120
-    save_interval = 50
+    save_interval = 1000
     replay_buffer_size = 40
     experiment_name = "humanoid_agibot"
     empirical_normalization = True
