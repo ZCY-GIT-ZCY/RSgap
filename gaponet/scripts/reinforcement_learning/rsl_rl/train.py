@@ -82,6 +82,44 @@ torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
 
 
+def _load_checkpoint_compatible(runner: OnPolicyRunner, resume_path: str) -> None:
+    checkpoint = None
+    try:
+        checkpoint = torch.load(resume_path, map_location="cpu")
+    except Exception:
+        checkpoint = None
+
+    if isinstance(checkpoint, dict) and "iter" in checkpoint:
+        runner.load(resume_path)
+        return
+
+    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+        policy = None
+        if hasattr(runner.alg, "policy"):
+            policy = runner.alg.policy
+        elif hasattr(runner.alg, "actor_critic"):
+            policy = runner.alg.actor_critic
+        if policy is None:
+            raise RuntimeError("Unsupported runner: no policy/actor_critic to load.")
+
+        load_result = policy.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        missing = getattr(load_result, "missing_keys", None)
+        unexpected = getattr(load_result, "unexpected_keys", None)
+        if missing is not None or unexpected is not None:
+            if missing or unexpected:
+                print(f"[WARN] Pretrain checkpoint load mismatch. missing={missing}, unexpected={unexpected}")
+
+        obs_norm_state = checkpoint.get("obs_norm_state_dict")
+        if obs_norm_state is not None and getattr(runner, "obs_normalizer", None) is not None:
+            runner.obs_normalizer.load_state_dict(obs_norm_state, strict=False)
+
+        runner.current_learning_iteration = int(checkpoint.get("iteration", 0))
+        print("[INFO] Loaded pretrain checkpoint (weights only). Optimizer reset.")
+        return
+
+    runner.load(resume_path)
+
+
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlOnPolicyRunnerCfg):
     """Train with RSL-RL agent."""
@@ -146,7 +184,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if agent_cfg.resume:
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
-        runner.load(resume_path)
+        _load_checkpoint_compatible(runner, resume_path)
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
