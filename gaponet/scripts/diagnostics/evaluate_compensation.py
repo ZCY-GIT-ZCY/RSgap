@@ -74,9 +74,12 @@ def _load_runner_checkpoint(ppo_runner, resume_path: str, load_optimizer: bool =
         if policy is None:
             raise RuntimeError("Unsupported runner: no policy/actor_critic to load.")
 
-        missing, unexpected = policy.load_state_dict(checkpoint["model_state_dict"], strict=False)
-        if missing or unexpected:
-            print(f"[WARN] Pretrain checkpoint load mismatch. missing={missing}, unexpected={unexpected}")
+        load_result = policy.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        missing = getattr(load_result, "missing_keys", None)
+        unexpected = getattr(load_result, "unexpected_keys", None)
+        if missing is not None or unexpected is not None:
+            if missing or unexpected:
+                print(f"[WARN] Pretrain checkpoint load mismatch. missing={missing}, unexpected={unexpected}")
 
         obs_norm_state = checkpoint.get("obs_norm_state_dict")
         if obs_norm_state is not None and getattr(ppo_runner, "obs_normalizer", None) is not None:
