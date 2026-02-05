@@ -64,6 +64,9 @@ def main() -> int:
     parser.add_argument("--save-dir", type=str, default="logs/pretrain", help="Directory to save checkpoints.")
     parser.add_argument("--save-interval", type=int, default=50, help="Iterations between checkpoints.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
+    parser.add_argument("--wandb", action="store_true", help="Log metrics to local Weights & Biases (offline).")
+    parser.add_argument("--wandb-project", type=str, default="gaponet-pretrain", help="W&B project name.")
+    parser.add_argument("--wandb-run-name", type=str, default=None, help="W&B run name.")
 
     # Simulation args
     parser.add_argument(
@@ -236,6 +239,32 @@ def main() -> int:
     prev_joint_pos = env_unwrapped.robot.data.joint_pos[:, env_unwrapped.motion_joint_ids].clone()
     prev_joint_vel = env_unwrapped.robot.data.joint_vel[:, env_unwrapped.motion_joint_ids].clone()
 
+    wandb_run = None
+    if args.wandb:
+        try:
+            import wandb
+            wandb_run = wandb.init(
+                project=args.wandb_project,
+                name=args.wandb_run_name,
+                dir=str(save_dir),
+                mode="offline",
+                config={
+                    "task": args.task,
+                    "num_envs": args.num_envs,
+                    "num_steps": args.num_steps,
+                    "num_iters": args.num_iters,
+                    "num_epochs": args.num_epochs,
+                    "num_mini_batches": args.num_mini_batches,
+                    "lr": args.lr,
+                    "weight_decay": args.weight_decay,
+                    "use_model_sensor": use_model_sensor,
+                    "train_log_std": args.train_log_std,
+                    "use_obs_norm": args.use_obs_norm,
+                },
+            )
+        except Exception as exc:
+            print(f"[WARN] Failed to initialize wandb: {exc}")
+
     print(f"[INFO] Starting pretrain. device={device}, num_envs={args.num_envs}, use_model_sensor={use_model_sensor}")
 
     for iteration in range(1, args.num_iters + 1):
@@ -316,6 +345,15 @@ def main() -> int:
         mean_loss = float(sum(epoch_losses) / max(1, len(epoch_losses)))
         if iteration % 10 == 0 or iteration == 1:
             print(f"[INFO] Iter {iteration}/{args.num_iters} - loss: {mean_loss:.6f}")
+        if wandb_run is not None:
+            wandb_run.log(
+                {
+                    "pretrain/loss": mean_loss,
+                    "pretrain/iter": iteration,
+                    "pretrain/progress": iteration / float(args.num_iters),
+                },
+                step=iteration,
+            )
 
         if iteration % args.save_interval == 0 or iteration == args.num_iters:
             ckpt_path = save_dir / f"pretrain_iter_{iteration:06d}.pt"
@@ -343,6 +381,8 @@ def main() -> int:
             print(f"[INFO] Saved checkpoint: {ckpt_path}")
 
     env.close()
+    if wandb_run is not None:
+        wandb_run.finish()
     simulation_app.close()
     return 0
 
