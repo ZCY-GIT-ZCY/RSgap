@@ -35,10 +35,10 @@ parser.add_argument(
     help="Warm up value branch only (freeze action branch) before training.",
 )
 parser.add_argument(
-    "--warmup_threshold",
-    type=float,
-    default=0.01,
-    help="Stop warmup when critic relative parameter change is below this threshold.",
+    "--warmup_iters",
+    type=int,
+    default=0,
+    help="Number of warmup iterations (0 means use min/max settings).",
 )
 parser.add_argument(
     "--warmup_lr",
@@ -55,14 +55,14 @@ parser.add_argument(
 parser.add_argument(
     "--warmup_min_iters",
     type=int,
-    default=5,
-    help="Minimum warmup iterations before checking threshold.",
+    default=0,
+    help="Deprecated. Use --warmup_iters instead.",
 )
 parser.add_argument(
     "--warmup_max_iters",
     type=int,
     default=0,
-    help="Maximum warmup iterations (0 means no limit).",
+    help="Deprecated. Use --warmup_iters instead.",
 )
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -175,27 +175,11 @@ def _set_critic_trainable(policy, trainable: bool) -> None:
             param.requires_grad = trainable
 
 
-def _clone_params(params):
-    return [p.detach().clone() for p in params]
-
-
-def _param_delta(prev_params, params) -> tuple[float, float]:
-    if not prev_params:
-        return float("inf"), float("inf")
-    total = 0.0
-    norm = 0.0
-    for prev, curr in zip(prev_params, params):
-        diff = curr.detach() - prev
-        total += float(torch.sum(diff * diff).item())
-        norm += float(torch.sum(curr.detach() * curr.detach()).item())
-    return total ** 0.5, norm ** 0.5
 
 
 def _warmup_critic_only(
     runner: OnPolicyRunner,
-    threshold: float,
-    min_iters: int,
-    max_iters: int,
+    iters: int,
     warmup_lr: float,
     use_adaptive_lr: bool,
 ) -> None:
@@ -220,33 +204,16 @@ def _warmup_critic_only(
     _set_all_trainable(policy, False)
     _set_critic_trainable(policy, True)
 
-    critic_params = [p for p in policy.critic.parameters()] if hasattr(policy, "critic") else []
-    prev_params = _clone_params(critic_params)
-
     warmup_iter = 0
     print(
-        f"[INFO] Warmup (critic only) start. threshold={threshold}, min_iters={min_iters}, "
-        f"max_iters={max_iters}, warmup_lr={warmup_lr if warmup_lr > 0.0 else 'keep'}, "
+        f"[INFO] Warmup (critic only) start. iters={iters}, "
+        f"warmup_lr={warmup_lr if warmup_lr > 0.0 else 'keep'}, "
         f"adaptive_lr={'on' if use_adaptive_lr else 'off'}"
     )
-    while True:
+    while warmup_iter < iters:
         warmup_iter += 1
         runner.learn(num_learning_iterations=1, init_at_random_ep_len=True)
-        delta, norm = _param_delta(prev_params, critic_params)
-        rel_delta = delta / (norm + 1.0e-12)
-        print(
-            f"[INFO] Warmup iter {warmup_iter}: critic param delta={delta:.6e}, "
-            f"rel_delta={rel_delta:.6e}"
-        )
-
-        if warmup_iter >= min_iters and rel_delta < threshold:
-            print("[INFO] Warmup converged by threshold.")
-            break
-        if max_iters and warmup_iter >= max_iters:
-            print("[WARN] Warmup reached max_iters; stopping.")
-            break
-
-        prev_params = _clone_params(critic_params)
+        print(f"[INFO] Warmup iter {warmup_iter}/{iters}")
 
     for param, requires_grad in original_requires_grad:
         param.requires_grad = requires_grad
@@ -329,9 +296,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if args_cli.warmup_critic:
         _warmup_critic_only(
             runner,
-            threshold=float(args_cli.warmup_threshold),
-            min_iters=int(args_cli.warmup_min_iters),
-            max_iters=int(args_cli.warmup_max_iters),
+            iters=int(args_cli.warmup_iters),
             warmup_lr=float(args_cli.warmup_lr),
             use_adaptive_lr=bool(args_cli.warmup_use_adaptive_lr),
         )
