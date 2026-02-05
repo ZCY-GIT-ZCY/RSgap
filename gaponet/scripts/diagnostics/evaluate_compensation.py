@@ -284,7 +284,11 @@ def main() -> int:
     env_wrapped = RslRlVecEnvWrapper(env)
 
     ppo_runner = OnPolicyRunner(env_wrapped, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
-    ppo_runner.load(resume_path)
+    try:
+        ppo_runner.load(resume_path, load_optimizer=False)
+    except TypeError:
+        # Backward compatibility if load() doesn't accept load_optimizer
+        ppo_runner.load(resume_path)
     policy = ppo_runner.get_inference_policy(device=device)
     use_model_sensor = bool(getattr(agent_cfg, "model_based_sensor", False))
 
