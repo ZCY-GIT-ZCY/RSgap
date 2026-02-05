@@ -95,6 +95,11 @@ def main() -> int:
         default="logs/train_result",
         help="Directory to save plots.",
     )
+    parser.add_argument(
+        "--interactive-html",
+        action="store_true",
+        help="Also save interactive HTML plots (click legend to highlight/hide lines).",
+    )
 
     # Add RSL-RL args
     if cli_args:
@@ -383,6 +388,12 @@ def main() -> int:
     if min_len == 0:
         raise RuntimeError("No trajectory data collected; cannot generate plots.")
 
+    if args.interactive_html:
+        try:
+            import plotly.graph_objects as go
+        except Exception as exc:
+            raise RuntimeError("plotly is required for --interactive-html. Please install plotly.") from exc
+
     for idx in range(joint_count):
         name = dof_names[idx]
         fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
@@ -409,6 +420,45 @@ def main() -> int:
         fig.tight_layout()
         fig.savefig(plot_dir / f"{name}_traj_comp.png")
         plt.close(fig)
+
+        if args.interactive_html:
+            html_fig = go.Figure()
+            html_fig.add_trace(go.Scatter(x=steps, y=real_deg[:, idx], mode="lines", name="real"))
+            html_fig.add_trace(go.Scatter(x=steps, y=sim_base_deg[:, idx], mode="lines", name="sim"))
+            html_fig.add_trace(go.Scatter(x=steps, y=sim_comp_deg[:, idx], mode="lines", name="sim+delta"))
+            html_fig.add_trace(go.Scatter(x=steps, y=target_deg[:, idx], mode="lines", name="target"))
+            html_fig.add_trace(go.Scatter(x=steps, y=target_delta_deg[:, idx], mode="lines", name="target+delta"))
+
+            html_fig.add_trace(
+                go.Scatter(
+                    x=steps,
+                    y=err_base,
+                    mode="lines",
+                    name=f"|sim-real| mean: {np.mean(err_base):.3f}",
+                    line=dict(dash="dash"),
+                    yaxis="y2",
+                )
+            )
+            html_fig.add_trace(
+                go.Scatter(
+                    x=steps,
+                    y=err_comp,
+                    mode="lines",
+                    name=f"|sim+delta-real| mean: {np.mean(err_comp):.3f}",
+                    yaxis="y2",
+                )
+            )
+
+            html_fig.update_layout(
+                title=f"Joint: {name}",
+                xaxis=dict(title="step"),
+                yaxis=dict(title="position (deg)"),
+                yaxis2=dict(title="|error| (deg)", overlaying="y", side="right"),
+                hovermode="x unified",
+                legend_title_text="Click to hide/highlight",
+                height=700,
+            )
+            html_fig.write_html(plot_dir / f"{name}_traj_comp.html", include_plotlyjs="cdn")
 
     print("[INFO] Done.")
 
