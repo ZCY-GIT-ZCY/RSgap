@@ -48,6 +48,9 @@ class HumanoidOperatorEnvCfg(DirectRLEnvCfg):
     action_space = 18
     state_space = 0
 
+    # action regularization
+    action_l2_coef = 1.0e-2
+
     early_termination = True
     termination_height = 0.8
 
