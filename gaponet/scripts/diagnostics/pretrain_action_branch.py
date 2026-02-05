@@ -364,6 +364,7 @@ def main() -> int:
                     "privileged_obs_norm_state_dict": privileged_obs_normalizer.state_dict()
                     if privileged_obs_normalizer is not None
                     else None,
+                    "iter": iteration,
                     "iteration": iteration,
                     "loss": mean_loss,
                     "config": {

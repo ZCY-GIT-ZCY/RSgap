@@ -51,6 +51,55 @@ def _update_sensor_data_from_sim(env_unwrapped) -> None:
     env_unwrapped.set_sensor_data(sensor)
 
 
+def _load_runner_checkpoint(ppo_runner, resume_path: str, load_optimizer: bool = False) -> None:
+    checkpoint = None
+    try:
+        checkpoint = torch.load(resume_path, map_location="cpu")
+    except Exception:
+        checkpoint = None
+
+    if isinstance(checkpoint, dict) and "iter" in checkpoint:
+        try:
+            ppo_runner.load(resume_path, load_optimizer=load_optimizer)
+        except TypeError:
+            ppo_runner.load(resume_path)
+        return
+
+    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+        policy = None
+        if hasattr(ppo_runner.alg, "policy"):
+            policy = ppo_runner.alg.policy
+        elif hasattr(ppo_runner.alg, "actor_critic"):
+            policy = ppo_runner.alg.actor_critic
+        if policy is None:
+            raise RuntimeError("Unsupported runner: no policy/actor_critic to load.")
+
+        missing, unexpected = policy.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        if missing or unexpected:
+            print(f"[WARN] Pretrain checkpoint load mismatch. missing={missing}, unexpected={unexpected}")
+
+        obs_norm_state = checkpoint.get("obs_norm_state_dict")
+        if obs_norm_state is not None and getattr(ppo_runner, "obs_normalizer", None) is not None:
+            ppo_runner.obs_normalizer.load_state_dict(obs_norm_state, strict=False)
+
+        priv_state = checkpoint.get("privileged_obs_norm_state_dict")
+        if priv_state is not None:
+            for attr in ("critic_obs_normalizer", "privileged_obs_normalizer"):
+                normalizer = getattr(ppo_runner, attr, None)
+                if normalizer is not None:
+                    normalizer.load_state_dict(priv_state, strict=False)
+                    break
+
+        ppo_runner.current_learning_iteration = int(checkpoint.get("iteration", 0))
+        print("[INFO] Loaded pretrain checkpoint into policy weights.")
+        return
+
+    try:
+        ppo_runner.load(resume_path, load_optimizer=load_optimizer)
+    except TypeError:
+        ppo_runner.load(resume_path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Evaluate GAPOnet compensation performance.")
 
@@ -284,11 +333,7 @@ def main() -> int:
     env_wrapped = RslRlVecEnvWrapper(env)
 
     ppo_runner = OnPolicyRunner(env_wrapped, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
-    try:
-        ppo_runner.load(resume_path, load_optimizer=False)
-    except TypeError:
-        # Backward compatibility if load() doesn't accept load_optimizer
-        ppo_runner.load(resume_path)
+    _load_runner_checkpoint(ppo_runner, resume_path, load_optimizer=False)
     policy = ppo_runner.get_inference_policy(device=device)
     use_model_sensor = bool(getattr(agent_cfg, "model_based_sensor", False))
 
