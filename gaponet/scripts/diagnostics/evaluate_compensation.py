@@ -100,6 +100,11 @@ def main() -> int:
         action="store_true",
         help="Also save interactive HTML plots (click legend to highlight/hide lines).",
     )
+    parser.add_argument(
+        "--new-history-update",
+        action="store_true",
+        help="Use new model_history timing (update after step; default is legacy timing).",
+    )
 
     # Add RSL-RL args
     if cli_args:
@@ -301,7 +306,10 @@ def main() -> int:
         time_indices_step = time_indices.clone()
         if use_model_sensor:
             with torch.no_grad():
-                model_obs = env_comp_unwrapped.compute_model_observation(add_noise=False, update_history=False).to(device)
+                model_obs = env_comp_unwrapped.compute_model_observation(
+                    add_noise=False,
+                    update_history=not args.new_history_update,
+                ).to(device)
                 sensor_data = ppo_runner.alg.policy.model_sensor(model_obs).reshape(
                     env_comp_unwrapped.num_envs, env_comp_unwrapped.num_sensor_positions, -1
                 )
@@ -335,7 +343,7 @@ def main() -> int:
             actions, motion_coords=(motion_indices, time_indices_step)
         )
 
-        if use_model_sensor:
+        if use_model_sensor and args.new_history_update:
             with torch.no_grad():
                 env_comp_unwrapped.compute_model_observation(add_noise=False, update_history=True)
 
