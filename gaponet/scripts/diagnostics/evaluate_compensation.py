@@ -287,6 +287,8 @@ def main() -> int:
         env_comp_unwrapped.model_history[:] = 0
 
     sim_comp_traj = []
+    target_traj = []
+    target_delta_traj = []
     prev_joint_pos = env_comp_unwrapped.robot.data.joint_pos[:, env_comp_unwrapped.motion_joint_ids].clone()
     prev_joint_vel = env_comp_unwrapped.robot.data.joint_vel[:, env_comp_unwrapped.motion_joint_ids].clone()
 
@@ -294,7 +296,7 @@ def main() -> int:
         time_indices_step = time_indices.clone()
         if use_model_sensor:
             with torch.no_grad():
-                model_obs = env_comp_unwrapped.compute_model_observation(add_noise=False).to(device)
+                model_obs = env_comp_unwrapped.compute_model_observation(add_noise=False, update_history=False).to(device)
                 sensor_data = ppo_runner.alg.policy.model_sensor(model_obs).reshape(
                     env_comp_unwrapped.num_envs, env_comp_unwrapped.num_sensor_positions, -1
                 )
@@ -316,15 +318,29 @@ def main() -> int:
             obs = torch.cat([obs_dict["branch"], obs_dict["trunk"]], dim=1)
             actions = policy(obs)
 
+        dof_target_pos = env_comp_unwrapped._motion_loader.dof_target_pos[motion_indices, time_indices_step]
+        delta_action = torch.zeros((args.num_envs, env_comp_unwrapped.num_dofs), device=device)
+        delta_action[:, env_comp_unwrapped._motion_loader.joint_sequence_index] = actions
+        apply_action = dof_target_pos + delta_action
+
+        target_pos = dof_target_pos[:, env_comp_unwrapped.motion_joint_ids].detach().cpu().numpy()
+        target_delta_pos = apply_action[:, env_comp_unwrapped.motion_joint_ids].detach().cpu().numpy()
+
         _, _, dones, _ = env_comp_unwrapped.step_operator(
             actions, motion_coords=(motion_indices, time_indices_step)
         )
+
+        if use_model_sensor:
+            with torch.no_grad():
+                env_comp_unwrapped.compute_model_observation(add_noise=False, update_history=True)
 
         motion_indices = env_comp_unwrapped.motion_indices.clone()
         time_indices = env_comp_unwrapped.time_indices.clone()
 
         sim_pos = env_comp_unwrapped.robot.data.joint_pos[:, env_comp_unwrapped.motion_joint_ids].detach().cpu().numpy()
         sim_comp_traj.append(sim_pos[0])
+        target_traj.append(target_pos[0])
+        target_delta_traj.append(target_delta_pos[0])
 
         prev_joint_pos = env_comp_unwrapped.robot.data.joint_pos[:, env_comp_unwrapped.motion_joint_ids].clone()
         prev_joint_vel = env_comp_unwrapped.robot.data.joint_vel[:, env_comp_unwrapped.motion_joint_ids].clone()
@@ -333,21 +349,27 @@ def main() -> int:
             break
 
     sim_comp_arr = np.stack(sim_comp_traj, axis=0)
+    target_arr = np.stack(target_traj, axis=0)
+    target_delta_arr = np.stack(target_delta_traj, axis=0)
     print(f"[INFO] Compensated simulation complete. Steps: {len(sim_comp_traj)}")
 
     # -------------------------------------------------------------------------
     # Visualization
     # -------------------------------------------------------------------------
-    min_len = min(sim_baseline_arr.shape[0], sim_comp_arr.shape[0], real_arr.shape[0])
+    min_len = min(sim_baseline_arr.shape[0], sim_comp_arr.shape[0], real_arr.shape[0], target_arr.shape[0])
     sim_baseline_arr = sim_baseline_arr[:min_len]
     sim_comp_arr = sim_comp_arr[:min_len]
     real_arr = real_arr[:min_len]
+    target_arr = target_arr[:min_len]
+    target_delta_arr = target_delta_arr[:min_len]
 
     steps = np.arange(min_len)
 
     sim_base_deg = np.degrees(sim_baseline_arr)
     sim_comp_deg = np.degrees(sim_comp_arr)
     real_deg = np.degrees(real_arr)
+    target_deg = np.degrees(target_arr)
+    target_delta_deg = np.degrees(target_delta_arr)
 
     dof_names = list(env_comp_unwrapped._motion_loader.dof_names)
     joint_count = min(18, len(dof_names))
@@ -368,6 +390,8 @@ def main() -> int:
         ax0.plot(steps, real_deg[:, idx], "r-", label="real", linewidth=1.5, alpha=0.8)
         ax0.plot(steps, sim_base_deg[:, idx], "b--", label="sim", linewidth=1.5, alpha=0.8)
         ax0.plot(steps, sim_comp_deg[:, idx], "g-", label="sim+delta", linewidth=1.5, alpha=0.8)
+        ax0.plot(steps, target_deg[:, idx], color="orange", linestyle=":", label="target", linewidth=1.5, alpha=0.8)
+        ax0.plot(steps, target_delta_deg[:, idx], color="purple", linestyle="-.", label="target+delta", linewidth=1.5, alpha=0.8)
         ax0.set_title(f"Joint: {name}")
         ax0.set_ylabel("position (deg)")
         ax0.legend()
