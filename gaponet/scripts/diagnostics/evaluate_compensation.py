@@ -396,13 +396,11 @@ def main() -> int:
 
     for idx in range(joint_count):
         name = dof_names[idx]
-        fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+        fig, (ax0, ax1, ax2) = plt.subplots(3, 1, figsize=(10, 10), sharex=True)
 
         ax0.plot(steps, real_deg[:, idx], "r-", label="real", linewidth=1.5, alpha=0.8)
         ax0.plot(steps, sim_base_deg[:, idx], "b--", label="sim", linewidth=1.5, alpha=0.8)
         ax0.plot(steps, sim_comp_deg[:, idx], "g-", label="sim+delta", linewidth=1.5, alpha=0.8)
-        ax0.plot(steps, target_deg[:, idx], color="orange", linestyle=":", label="target", linewidth=1.5, alpha=0.8)
-        ax0.plot(steps, target_delta_deg[:, idx], color="purple", linestyle="-.", label="target+delta", linewidth=1.5, alpha=0.8)
         ax0.set_title(f"Joint: {name}")
         ax0.set_ylabel("position (deg)")
         ax0.legend()
@@ -412,22 +410,28 @@ def main() -> int:
         err_comp = np.abs(sim_comp_deg[:, idx] - real_deg[:, idx])
         ax1.plot(steps, err_base, "b--", label=f"|sim-real| mean: {np.mean(err_base):.3f}")
         ax1.plot(steps, err_comp, "g-", label=f"|sim+delta-real| mean: {np.mean(err_comp):.3f}")
-        ax1.set_xlabel("step")
         ax1.set_ylabel("|error| (deg)")
         ax1.legend()
         ax1.grid(True, alpha=0.3)
+
+        ax2.plot(steps, target_deg[:, idx], color="orange", linestyle=":", label="target", linewidth=1.5, alpha=0.8)
+        ax2.plot(steps, target_delta_deg[:, idx], color="purple", linestyle="-.", label="target+delta", linewidth=1.5, alpha=0.8)
+        ax2.set_xlabel("step")
+        ax2.set_ylabel("target (deg)")
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
 
         fig.tight_layout()
         fig.savefig(plot_dir / f"{name}_traj_comp.png")
         plt.close(fig)
 
         if args.interactive_html:
-            html_fig = go.Figure()
-            html_fig.add_trace(go.Scatter(x=steps, y=real_deg[:, idx], mode="lines", name="real"))
-            html_fig.add_trace(go.Scatter(x=steps, y=sim_base_deg[:, idx], mode="lines", name="sim"))
-            html_fig.add_trace(go.Scatter(x=steps, y=sim_comp_deg[:, idx], mode="lines", name="sim+delta"))
-            html_fig.add_trace(go.Scatter(x=steps, y=target_deg[:, idx], mode="lines", name="target"))
-            html_fig.add_trace(go.Scatter(x=steps, y=target_delta_deg[:, idx], mode="lines", name="target+delta"))
+            from plotly.subplots import make_subplots
+
+            html_fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.06)
+            html_fig.add_trace(go.Scatter(x=steps, y=real_deg[:, idx], mode="lines", name="real"), row=1, col=1)
+            html_fig.add_trace(go.Scatter(x=steps, y=sim_base_deg[:, idx], mode="lines", name="sim"), row=1, col=1)
+            html_fig.add_trace(go.Scatter(x=steps, y=sim_comp_deg[:, idx], mode="lines", name="sim+delta"), row=1, col=1)
 
             html_fig.add_trace(
                 go.Scatter(
@@ -436,8 +440,9 @@ def main() -> int:
                     mode="lines",
                     name=f"|sim-real| mean: {np.mean(err_base):.3f}",
                     line=dict(dash="dash"),
-                    yaxis="y2",
-                )
+                ),
+                row=2,
+                col=1,
             )
             html_fig.add_trace(
                 go.Scatter(
@@ -445,19 +450,28 @@ def main() -> int:
                     y=err_comp,
                     mode="lines",
                     name=f"|sim+delta-real| mean: {np.mean(err_comp):.3f}",
-                    yaxis="y2",
-                )
+                ),
+                row=2,
+                col=1,
+            )
+
+            html_fig.add_trace(go.Scatter(x=steps, y=target_deg[:, idx], mode="lines", name="target"), row=3, col=1)
+            html_fig.add_trace(
+                go.Scatter(x=steps, y=target_delta_deg[:, idx], mode="lines", name="target+delta"),
+                row=3,
+                col=1,
             )
 
             html_fig.update_layout(
                 title=f"Joint: {name}",
-                xaxis=dict(title="step"),
-                yaxis=dict(title="position (deg)"),
-                yaxis2=dict(title="|error| (deg)", overlaying="y", side="right"),
                 hovermode="x unified",
                 legend_title_text="Click to hide/highlight",
-                height=700,
+                height=900,
             )
+            html_fig.update_yaxes(title_text="position (deg)", row=1, col=1)
+            html_fig.update_yaxes(title_text="|error| (deg)", row=2, col=1)
+            html_fig.update_yaxes(title_text="target (deg)", row=3, col=1)
+            html_fig.update_xaxes(title_text="step", row=3, col=1)
             html_fig.write_html(plot_dir / f"{name}_traj_comp.html", include_plotlyjs="cdn")
 
     print("[INFO] Done.")
