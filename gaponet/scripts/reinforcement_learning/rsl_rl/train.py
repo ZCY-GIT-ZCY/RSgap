@@ -37,8 +37,8 @@ parser.add_argument(
 parser.add_argument(
     "--warmup_threshold",
     type=float,
-    default=1.0e-4,
-    help="Stop warmup when critic parameter change is below this threshold.",
+    default=0.01,
+    help="Stop warmup when critic relative parameter change is below this threshold.",
 )
 parser.add_argument(
     "--warmup_min_iters",
@@ -167,14 +167,16 @@ def _clone_params(params):
     return [p.detach().clone() for p in params]
 
 
-def _param_delta(prev_params, params) -> float:
+def _param_delta(prev_params, params) -> tuple[float, float]:
     if not prev_params:
-        return float("inf")
+        return float("inf"), float("inf")
     total = 0.0
+    norm = 0.0
     for prev, curr in zip(prev_params, params):
         diff = curr.detach() - prev
         total += float(torch.sum(diff * diff).item())
-    return total ** 0.5
+        norm += float(torch.sum(curr.detach() * curr.detach()).item())
+    return total ** 0.5, norm ** 0.5
 
 
 def _warmup_critic_only(
@@ -202,10 +204,14 @@ def _warmup_critic_only(
     while True:
         warmup_iter += 1
         runner.learn(num_learning_iterations=1, init_at_random_ep_len=True)
-        delta = _param_delta(prev_params, critic_params)
-        print(f"[INFO] Warmup iter {warmup_iter}: critic param delta={delta:.6e}")
+        delta, norm = _param_delta(prev_params, critic_params)
+        rel_delta = delta / (norm + 1.0e-12)
+        print(
+            f"[INFO] Warmup iter {warmup_iter}: critic param delta={delta:.6e}, "
+            f"rel_delta={rel_delta:.6e}"
+        )
 
-        if warmup_iter >= min_iters and delta < threshold:
+        if warmup_iter >= min_iters and rel_delta < threshold:
             print("[INFO] Warmup converged by threshold.")
             break
         if max_iters and warmup_iter >= max_iters:
