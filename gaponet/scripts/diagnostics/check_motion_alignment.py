@@ -297,6 +297,7 @@ def main() -> int:
     joint_err_maxs = []
     sim_traj = []
     real_traj = []
+    target_traj = []
     time_idx_hist: list[int] = []
 
     per_joint_max = []
@@ -318,6 +319,9 @@ def main() -> int:
         real_pos = env_unwrapped._motion_loader.dof_positions[
             motion_indices, time_indices_step
         ].detach().cpu().numpy()
+        target_pos = env_unwrapped._motion_loader.dof_target_pos[
+            motion_indices, time_indices_step
+        ].detach().cpu().numpy()
         # Compute aligned error in degrees to match plotting units.
         joint_pos_diff_deg = np.degrees(np.abs(sim_pos - real_pos))
         if step >= args.warmup_steps:
@@ -326,6 +330,7 @@ def main() -> int:
             per_joint_max.append(np.max(joint_pos_diff_deg, axis=0))
         sim_traj.append(sim_pos[0])
         real_traj.append(real_pos[0])
+        target_traj.append(target_pos[0])
         time_idx_hist.append(int(time_indices_step[0].item()))
         if bool(torch.any(dones)):
             break
@@ -348,10 +353,12 @@ def main() -> int:
                 plot_dir.mkdir(parents=True, exist_ok=True)
                 sim_arr = np.stack(sim_traj, axis=0)
                 real_arr = np.stack(real_traj, axis=0)
+                target_arr = np.stack(target_traj, axis=0)
                 warmup = max(0, int(args.warmup_steps))
                 if warmup < sim_arr.shape[0]:
                     sim_arr = sim_arr[warmup:]
                     real_arr = real_arr[warmup:]
+                    target_arr = target_arr[warmup:]
                 if args.plot_all_joints:
                     top_idx = np.arange(sim_arr.shape[1])
                 else:
@@ -359,16 +366,20 @@ def main() -> int:
                 steps = np.arange(sim_arr.shape[0])
                 sim_arr_deg = np.degrees(sim_arr)
                 real_arr_deg = np.degrees(real_arr)
+                target_arr_deg = np.degrees(target_arr)
                 for idx in top_idx:
                     sim_line = sim_arr_deg[:, idx]
                     real_line = real_arr_deg[:, idx]
+                    target_line = target_arr_deg[:, idx]
                     err_line = sim_line - real_line
                     abs_err_line = np.abs(err_line)
+                    abs_err_target_line = np.abs(sim_line - target_line)
                     mean_err = float(np.mean(abs_err_line))
 
                     fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(8, 5), sharex=True)
                     ax0.plot(steps, sim_line, label="sim")
                     ax0.plot(steps, real_line, label="real")
+                    ax0.plot(steps, target_line, label="target")
                     ax0.set_title(f"{dof_names[idx]} (deg)")
                     ax0.text(
                         0.01,
@@ -382,6 +393,7 @@ def main() -> int:
                     ax0.legend()
 
                     ax1.plot(steps, abs_err_line, label="|error|")
+                    ax1.plot(steps, abs_err_target_line, label="|sim-target|")
                     ax1.set_xlabel("step")
                     ax1.set_ylabel("|error| (deg)")
                     ax1.legend()
