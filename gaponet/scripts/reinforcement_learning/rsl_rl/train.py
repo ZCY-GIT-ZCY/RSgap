@@ -28,6 +28,30 @@ parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy 
 parser.add_argument(
     "--checkpoint_path", type=str, default=None, help="Absolute or relative path to a checkpoint file."
 )
+parser.add_argument(
+    "--warmup_critic",
+    action="store_true",
+    default=False,
+    help="Warm up value branch only (freeze action branch) before training.",
+)
+parser.add_argument(
+    "--warmup_threshold",
+    type=float,
+    default=1.0e-4,
+    help="Stop warmup when critic parameter change is below this threshold.",
+)
+parser.add_argument(
+    "--warmup_min_iters",
+    type=int,
+    default=5,
+    help="Minimum warmup iterations before checking threshold.",
+)
+parser.add_argument(
+    "--warmup_max_iters",
+    type=int,
+    default=0,
+    help="Maximum warmup iterations (0 means no limit).",
+)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -120,6 +144,80 @@ def _load_checkpoint_compatible(runner: OnPolicyRunner, resume_path: str) -> Non
     runner.load(resume_path)
 
 
+def _get_runner_policy(runner: OnPolicyRunner):
+    if hasattr(runner.alg, "policy"):
+        return runner.alg.policy
+    if hasattr(runner.alg, "actor_critic"):
+        return runner.alg.actor_critic
+    return None
+
+
+def _set_all_trainable(policy, trainable: bool) -> None:
+    for param in policy.parameters():
+        param.requires_grad = trainable
+
+
+def _set_critic_trainable(policy, trainable: bool) -> None:
+    if hasattr(policy, "critic"):
+        for param in policy.critic.parameters():
+            param.requires_grad = trainable
+
+
+def _clone_params(params):
+    return [p.detach().clone() for p in params]
+
+
+def _param_delta(prev_params, params) -> float:
+    if not prev_params:
+        return float("inf")
+    total = 0.0
+    for prev, curr in zip(prev_params, params):
+        diff = curr.detach() - prev
+        total += float(torch.sum(diff * diff).item())
+    return total ** 0.5
+
+
+def _warmup_critic_only(
+    runner: OnPolicyRunner,
+    threshold: float,
+    min_iters: int,
+    max_iters: int,
+) -> None:
+    policy = _get_runner_policy(runner)
+    if policy is None:
+        print("[WARN] Warmup skipped: no policy/actor_critic on runner.")
+        return
+
+    original_requires_grad = [(p, p.requires_grad) for p in policy.parameters()]
+    _set_all_trainable(policy, False)
+    _set_critic_trainable(policy, True)
+
+    critic_params = [p for p in policy.critic.parameters()] if hasattr(policy, "critic") else []
+    prev_params = _clone_params(critic_params)
+
+    warmup_iter = 0
+    print(
+        f"[INFO] Warmup (critic only) start. threshold={threshold}, min_iters={min_iters}, max_iters={max_iters}"
+    )
+    while True:
+        warmup_iter += 1
+        runner.learn(num_learning_iterations=1, init_at_random_ep_len=True)
+        delta = _param_delta(prev_params, critic_params)
+        print(f"[INFO] Warmup iter {warmup_iter}: critic param delta={delta:.6e}")
+
+        if warmup_iter >= min_iters and delta < threshold:
+            print("[INFO] Warmup converged by threshold.")
+            break
+        if max_iters and warmup_iter >= max_iters:
+            print("[WARN] Warmup reached max_iters; stopping.")
+            break
+
+        prev_params = _clone_params(critic_params)
+
+    for param, requires_grad in original_requires_grad:
+        param.requires_grad = requires_grad
+
+
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlOnPolicyRunnerCfg):
     """Train with RSL-RL agent."""
@@ -185,6 +283,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         _load_checkpoint_compatible(runner, resume_path)
+
+    if args_cli.warmup_critic:
+        _warmup_critic_only(
+            runner,
+            threshold=float(args_cli.warmup_threshold),
+            min_iters=int(args_cli.warmup_min_iters),
+            max_iters=int(args_cli.warmup_max_iters),
+        )
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
