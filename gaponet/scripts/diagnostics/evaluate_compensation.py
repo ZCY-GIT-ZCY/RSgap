@@ -323,8 +323,8 @@ def main() -> int:
         delta_action[:, env_comp_unwrapped._motion_loader.joint_sequence_index] = actions
         apply_action = dof_target_pos + delta_action
 
-        target_pos = dof_target_pos[:, env_comp_unwrapped.motion_joint_ids].detach().cpu().numpy()
-        target_delta_pos = apply_action[:, env_comp_unwrapped.motion_joint_ids].detach().cpu().numpy()
+        target_pos = dof_target_pos.detach().cpu().numpy()
+        target_delta_pos = apply_action.detach().cpu().numpy()
 
         _, _, dones, _ = env_comp_unwrapped.step_operator(
             actions, motion_coords=(motion_indices, time_indices_step)
