@@ -41,6 +41,18 @@ parser.add_argument(
     help="Stop warmup when critic relative parameter change is below this threshold.",
 )
 parser.add_argument(
+    "--warmup_lr",
+    type=float,
+    default=0.0,
+    help="Override learning rate during warmup (0 means keep current).",
+)
+parser.add_argument(
+    "--warmup_use_adaptive_lr",
+    action="store_true",
+    default=False,
+    help="Keep adaptive learning rate schedule during warmup.",
+)
+parser.add_argument(
     "--warmup_min_iters",
     type=int,
     default=5,
@@ -184,11 +196,25 @@ def _warmup_critic_only(
     threshold: float,
     min_iters: int,
     max_iters: int,
+    warmup_lr: float,
+    use_adaptive_lr: bool,
 ) -> None:
     policy = _get_runner_policy(runner)
     if policy is None:
         print("[WARN] Warmup skipped: no policy/actor_critic on runner.")
         return
+
+    orig_lrs = None
+    if hasattr(runner.alg, "optimizer"):
+        orig_lrs = [group.get("lr", None) for group in runner.alg.optimizer.param_groups]
+        if warmup_lr and warmup_lr > 0.0:
+            for group in runner.alg.optimizer.param_groups:
+                group["lr"] = warmup_lr
+
+    orig_schedule = None
+    if not use_adaptive_lr and hasattr(runner.alg, "schedule"):
+        orig_schedule = runner.alg.schedule
+        runner.alg.schedule = "fixed"
 
     original_requires_grad = [(p, p.requires_grad) for p in policy.parameters()]
     _set_all_trainable(policy, False)
@@ -199,7 +225,9 @@ def _warmup_critic_only(
 
     warmup_iter = 0
     print(
-        f"[INFO] Warmup (critic only) start. threshold={threshold}, min_iters={min_iters}, max_iters={max_iters}"
+        f"[INFO] Warmup (critic only) start. threshold={threshold}, min_iters={min_iters}, "
+        f"max_iters={max_iters}, warmup_lr={warmup_lr if warmup_lr > 0.0 else 'keep'}, "
+        f"adaptive_lr={'on' if use_adaptive_lr else 'off'}"
     )
     while True:
         warmup_iter += 1
@@ -222,6 +250,14 @@ def _warmup_critic_only(
 
     for param, requires_grad in original_requires_grad:
         param.requires_grad = requires_grad
+
+    if orig_schedule is not None:
+        runner.alg.schedule = orig_schedule
+
+    if orig_lrs is not None and hasattr(runner.alg, "optimizer"):
+        for group, lr in zip(runner.alg.optimizer.param_groups, orig_lrs):
+            if lr is not None:
+                group["lr"] = lr
 
 
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
@@ -296,6 +332,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             threshold=float(args_cli.warmup_threshold),
             min_iters=int(args_cli.warmup_min_iters),
             max_iters=int(args_cli.warmup_max_iters),
+            warmup_lr=float(args_cli.warmup_lr),
+            use_adaptive_lr=bool(args_cli.warmup_use_adaptive_lr),
         )
 
     # dump the configuration into log-directory
