@@ -309,7 +309,16 @@ class HumanoidOperatorEnv(DirectRLEnv):
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         time_out = self.episode_length_buf >= self.max_episode_length
         died = torch.zeros_like(time_out)
-        
+        time_indices_step = self.time_indices.clone()
+
+        gap_done = torch.zeros_like(time_out)
+        if self.mode != "play" and getattr(self.cfg, "online_gap_filter", False):
+            real_dof_positions = self._motion_loader.dof_positions[self.motion_indices, time_indices_step]
+            robot_dof_positions = self.robot.data.joint_pos[:, self.motion_joint_ids]
+            mean_abs_pos_err = torch.mean(torch.abs(real_dof_positions - robot_dof_positions), dim=1)
+            gap_threshold = float(np.deg2rad(getattr(self.cfg, "online_gap_deg", 5.0)))
+            gap_done = mean_abs_pos_err > gap_threshold
+
         # update time_indices
         self.time_indices += 1
 
@@ -349,6 +358,8 @@ class HumanoidOperatorEnv(DirectRLEnv):
 
         # check if need to reset (time_indices exceeds motion_len)
         motion_done = self.time_indices >= self._motion_loader.motion_len[self.motion_indices] - 1
+        if torch.any(gap_done):
+            motion_done = motion_done | gap_done
         return died, motion_done
 
     def _reset_idx(self, env_ids: torch.Tensor | None):

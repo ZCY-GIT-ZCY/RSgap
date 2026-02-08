@@ -62,6 +62,12 @@ class HumanoidOperatorEnvCfg(DirectRLEnvCfg):
     reset_strategy = "random"  # default, random, random-start
     # skip head/tail steps when sampling training frames
     sample_edge_steps = 50
+    # filter training frames by sim-real joint error (degrees)
+    filter_sim_real_gap = False
+    sim_real_gap_deg = 5.0
+    # online filter using training sim data (degrees)
+    online_gap_filter = False
+    online_gap_deg = 4.0
 
     # simulation
     sim: SimulationCfg = SimulationCfg(
