@@ -297,14 +297,24 @@ class DataLoader:
                 else:
                     raise FileNotFoundError(f"Episode 文件不存在: {parquet_path}")
         
+        return self._load_parquet_file(parquet_path, episode_index=episode_index)
+
+    def load_episode_from_path(self, parquet_path: Path) -> List[FrameRecord]:
+        """Load episode frames from a specific parquet path."""
+        parquet_path = Path(parquet_path)
+        if not parquet_path.exists():
+            raise FileNotFoundError(f"Episode 文件不存在: {parquet_path}")
+        return self._load_parquet_file(parquet_path, episode_index=None)
+
+    def _load_parquet_file(self, parquet_path: Path, episode_index: int | None) -> List[FrameRecord]:
         # 读取数据
         df = pd.read_parquet(parquet_path)
-        
+
         frames = []
         for _, row in df.iterrows():
             obs_state = np.array(row["observation.state"], dtype=np.float32)
             action = np.array(row["action"], dtype=np.float32)
-            
+
             real_joint_pos = self._extract_full_joint_positions(obs_state)
             target_joint_pos = self._extract_full_joint_positions_from_action(action)
 
@@ -327,8 +337,11 @@ class DataLoader:
                 target_end_effector_pos=target_end_effector,
             )
             frames.append(frame)
-        
-        print(f"[DataLoader] Episode {episode_index}: 加载 {len(frames)} 帧")
+
+        if episode_index is None:
+            print(f"[DataLoader] {parquet_path.name}: 加载 {len(frames)} 帧")
+        else:
+            print(f"[DataLoader] Episode {episode_index}: 加载 {len(frames)} 帧")
         return frames
     
     def _extract_full_joint_positions(self, state: np.ndarray) -> np.ndarray:

@@ -77,6 +77,14 @@ def scan_episode_indices(data_root: Path) -> List[int]:
     return sorted(indices)
 
 
+def scan_episode_paths(data_root: Path) -> List[Path]:
+    """Scan chunk directories for episode_*.parquet and return sorted paths."""
+    if not data_root.exists():
+        raise FileNotFoundError(f"Data path not found: {data_root}")
+    paths = sorted(data_root.rglob("episode_*.parquet"))
+    return [p for p in paths if p.is_file()]
+
+
 def compute_velocity(positions: np.ndarray, timestamps: np.ndarray, fallback_dt: float) -> np.ndarray:
     """Compute joint velocities by time gradient with fallback for bad timestamps."""
     if positions.shape[0] < 2:
@@ -159,15 +167,18 @@ def main() -> int:
 
     loader = DataLoader(str(dataset_path))
     total_episodes = loader.get_episode_count()
+    episode_paths: List[Path] = []
     if args.episodes.strip().lower() == "all" and args.scan_data:
         data_root = dataset_path / "data"
-        episode_indices = scan_episode_indices(data_root)
-        if not episode_indices:
+        episode_paths = scan_episode_paths(data_root)
+        if not episode_paths:
             raise RuntimeError(f"No episode_*.parquet found under: {data_root}")
+        episode_indices = []
     else:
         episode_indices = parse_episode_indices(args.episodes, total_episodes)
     if not episode_indices:
-        raise ValueError(f"No valid episodes parsed from '{args.episodes}'")
+        if not episode_paths:
+            raise ValueError(f"No valid episodes parsed from '{args.episodes}'")
 
     joint_names = JointNameMapper.get_joint_names(include_gripper=False)
     num_dofs = len(joint_names)
@@ -178,58 +189,110 @@ def main() -> int:
     torques_list: List[np.ndarray] = []
 
     print(f"[Info] Dataset: {dataset_path}")
-    print(f"[Info] Episodes: {episode_indices}")
+    if episode_paths:
+        print(f"[Info] Episodes (files): {len(episode_paths)}")
+    else:
+        print(f"[Info] Episodes: {episode_indices}")
     print(f"[Info] DOFs: {num_dofs}")
 
-    for ep in episode_indices:
-        frames = loader.load_episode(ep)
+    if episode_paths:
+        for parquet_path in episode_paths:
+            frames = loader.load_episode_from_path(parquet_path)
+            if not frames:
+                print(f"[Skip] Episode file {parquet_path.name}: empty")
+                continue
+            arrays = frames_to_arrays(frames)
+            timestamps = arrays["timestamps"].astype(np.float64)
+            real_pos = arrays["real_joint_pos"].astype(np.float32)
+            target_pos = arrays["target_joint_pos"].astype(np.float32)
+
+            if args.resample_fps is not None:
+                if args.resample_fps <= 0:
+                    raise ValueError("--resample-fps must be positive")
+                dt = 1.0 / float(args.resample_fps)
+                t0 = float(timestamps[0])
+                t1 = float(timestamps[-1])
+                target_timestamps = np.arange(t0, t1 + dt * 0.5, dt, dtype=np.float64)
+                real_pos = TimeAligner.interpolate_to_target_timestamps(
+                    timestamps, real_pos, target_timestamps
+                ).astype(np.float32)
+                target_pos = TimeAligner.interpolate_to_target_timestamps(
+                    timestamps, target_pos, target_timestamps
+                ).astype(np.float32)
+                timestamps = target_timestamps
+
+            if real_pos.shape[1] != num_dofs or target_pos.shape[1] != num_dofs:
+                raise ValueError(
+                    f"Episode {parquet_path.name} DOF mismatch: real={real_pos.shape}, target={target_pos.shape}, expected {num_dofs}"
+                )
+
+            vel = compute_velocity(real_pos, timestamps, fallback_dt=1.0 / loader.config.fps)
+            torque = np.zeros_like(real_pos, dtype=np.float32)
+
+            if not np.isfinite(real_pos).all() or not np.isfinite(target_pos).all():
+                raise ValueError(f"Episode {parquet_path.name} contains NaN in positions")
+
+            real_positions_list.append(real_pos)
+            target_positions_list.append(target_pos)
+            velocities_list.append(vel)
+            torques_list.append(torque)
+
+            if args.resample_fps is None:
+                print(f"[OK] {parquet_path.name}: frames={real_pos.shape[0]}")
+            else:
+                print(
+                    f"[OK] {parquet_path.name}: frames={real_pos.shape[0]} (resampled to {args.resample_fps}Hz)"
+                )
+    else:
+        for ep in episode_indices:
+            frames = loader.load_episode(ep)
         if not frames:
-            print(f"[Skip] Episode {ep}: empty")
-            continue
+                print(f"[Skip] Episode {ep}: empty")
+                continue
 
-        arrays = frames_to_arrays(frames)
-        timestamps = arrays["timestamps"].astype(np.float64)
-        real_pos = arrays["real_joint_pos"].astype(np.float32)
-        target_pos = arrays["target_joint_pos"].astype(np.float32)
+            arrays = frames_to_arrays(frames)
+            timestamps = arrays["timestamps"].astype(np.float64)
+            real_pos = arrays["real_joint_pos"].astype(np.float32)
+            target_pos = arrays["target_joint_pos"].astype(np.float32)
 
-        if args.resample_fps is not None:
-            if args.resample_fps <= 0:
-                raise ValueError("--resample-fps must be positive")
-            dt = 1.0 / float(args.resample_fps)
-            t0 = float(timestamps[0])
-            t1 = float(timestamps[-1])
-            target_timestamps = np.arange(t0, t1 + dt * 0.5, dt, dtype=np.float64)
-            real_pos = TimeAligner.interpolate_to_target_timestamps(
-                timestamps, real_pos, target_timestamps
-            ).astype(np.float32)
-            target_pos = TimeAligner.interpolate_to_target_timestamps(
-                timestamps, target_pos, target_timestamps
-            ).astype(np.float32)
-            timestamps = target_timestamps
+            if args.resample_fps is not None:
+                if args.resample_fps <= 0:
+                    raise ValueError("--resample-fps must be positive")
+                dt = 1.0 / float(args.resample_fps)
+                t0 = float(timestamps[0])
+                t1 = float(timestamps[-1])
+                target_timestamps = np.arange(t0, t1 + dt * 0.5, dt, dtype=np.float64)
+                real_pos = TimeAligner.interpolate_to_target_timestamps(
+                    timestamps, real_pos, target_timestamps
+                ).astype(np.float32)
+                target_pos = TimeAligner.interpolate_to_target_timestamps(
+                    timestamps, target_pos, target_timestamps
+                ).astype(np.float32)
+                timestamps = target_timestamps
 
-        if real_pos.shape[1] != num_dofs or target_pos.shape[1] != num_dofs:
-            raise ValueError(
-                f"Episode {ep} DOF mismatch: real={real_pos.shape}, target={target_pos.shape}, expected {num_dofs}"
-            )
+            if real_pos.shape[1] != num_dofs or target_pos.shape[1] != num_dofs:
+                raise ValueError(
+                    f"Episode {ep} DOF mismatch: real={real_pos.shape}, target={target_pos.shape}, expected {num_dofs}"
+                )
 
-        vel = compute_velocity(real_pos, timestamps, fallback_dt=1.0 / loader.config.fps)
-        torque = np.zeros_like(real_pos, dtype=np.float32)
+            vel = compute_velocity(real_pos, timestamps, fallback_dt=1.0 / loader.config.fps)
+            torque = np.zeros_like(real_pos, dtype=np.float32)
 
-        # Basic sanity checks
-        if not np.isfinite(real_pos).all() or not np.isfinite(target_pos).all():
-            raise ValueError(f"Episode {ep} contains NaN in positions")
+            # Basic sanity checks
+            if not np.isfinite(real_pos).all() or not np.isfinite(target_pos).all():
+                raise ValueError(f"Episode {ep} contains NaN in positions")
 
-        real_positions_list.append(real_pos)
-        target_positions_list.append(target_pos)
-        velocities_list.append(vel)
-        torques_list.append(torque)
+            real_positions_list.append(real_pos)
+            target_positions_list.append(target_pos)
+            velocities_list.append(vel)
+            torques_list.append(torque)
 
-        if args.resample_fps is None:
-            print(f"[OK] Episode {ep}: frames={real_pos.shape[0]}")
-        else:
-            print(
-                f"[OK] Episode {ep}: frames={real_pos.shape[0]} (resampled to {args.resample_fps}Hz)"
-            )
+            if args.resample_fps is None:
+                print(f"[OK] Episode {ep}: frames={real_pos.shape[0]}")
+            else:
+                print(
+                    f"[OK] Episode {ep}: frames={real_pos.shape[0]} (resampled to {args.resample_fps}Hz)"
+                )
 
     if not real_positions_list:
         raise RuntimeError("No valid episodes converted. Nothing to save.")
