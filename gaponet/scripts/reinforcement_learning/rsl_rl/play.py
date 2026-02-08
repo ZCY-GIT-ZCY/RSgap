@@ -111,7 +111,39 @@ def main():
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
     ppo_runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
-    ppo_runner.load(resume_path)
+    checkpoint = None
+    try:
+        checkpoint = torch.load(resume_path, map_location="cpu")
+    except Exception:
+        checkpoint = None
+
+    def _load_policy_weights() -> bool:
+        if not isinstance(checkpoint, dict):
+            return False
+        state = checkpoint.get("model_state_dict") or checkpoint.get("state_dict")
+        if state is None:
+            return False
+        policy = None
+        if hasattr(ppo_runner.alg, "policy"):
+            policy = ppo_runner.alg.policy
+        elif hasattr(ppo_runner.alg, "actor_critic"):
+            policy = ppo_runner.alg.actor_critic
+        if policy is None:
+            raise RuntimeError("Unsupported runner: no policy/actor_critic to load.")
+        policy.load_state_dict(state, strict=False)
+        obs_norm_state = checkpoint.get("obs_norm_state_dict")
+        if obs_norm_state is not None and getattr(ppo_runner, "obs_normalizer", None) is not None:
+            ppo_runner.obs_normalizer.load_state_dict(obs_norm_state, strict=False)
+        ppo_runner.current_learning_iteration = int(checkpoint.get("iteration", checkpoint.get("iter", 0)))
+        print("[INFO] Loaded checkpoint (weights only).")
+        return True
+
+    if not _load_policy_weights():
+        try:
+            ppo_runner.load(resume_path)
+        except KeyError:
+            if not _load_policy_weights():
+                raise
 
     # obtain the trained policy for inference
     policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)

@@ -58,14 +58,12 @@ def _load_runner_checkpoint(ppo_runner, resume_path: str, load_optimizer: bool =
     except Exception:
         checkpoint = None
 
-    if isinstance(checkpoint, dict) and "iter" in checkpoint:
-        try:
-            ppo_runner.load(resume_path, load_optimizer=load_optimizer)
-        except TypeError:
-            ppo_runner.load(resume_path)
-        return
-
-    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+    def _load_policy_weights() -> bool:
+        if not isinstance(checkpoint, dict):
+            return False
+        state = checkpoint.get("model_state_dict") or checkpoint.get("state_dict")
+        if state is None:
+            return False
         policy = None
         if hasattr(ppo_runner.alg, "policy"):
             policy = ppo_runner.alg.policy
@@ -74,7 +72,7 @@ def _load_runner_checkpoint(ppo_runner, resume_path: str, load_optimizer: bool =
         if policy is None:
             raise RuntimeError("Unsupported runner: no policy/actor_critic to load.")
 
-        load_result = policy.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        load_result = policy.load_state_dict(state, strict=False)
         missing = getattr(load_result, "missing_keys", None)
         unexpected = getattr(load_result, "unexpected_keys", None)
         if missing is not None or unexpected is not None:
@@ -93,8 +91,22 @@ def _load_runner_checkpoint(ppo_runner, resume_path: str, load_optimizer: bool =
                     normalizer.load_state_dict(priv_state, strict=False)
                     break
 
-        ppo_runner.current_learning_iteration = int(checkpoint.get("iteration", 0))
-        print("[INFO] Loaded pretrain checkpoint into policy weights.")
+        ppo_runner.current_learning_iteration = int(checkpoint.get("iteration", checkpoint.get("iter", 0)))
+        print("[INFO] Loaded checkpoint weights (runner state skipped).")
+        return True
+
+    if _load_policy_weights():
+        return
+
+    if isinstance(checkpoint, dict) and "iter" in checkpoint:
+        try:
+            ppo_runner.load(resume_path, load_optimizer=load_optimizer)
+        except TypeError:
+            ppo_runner.load(resume_path)
+        except KeyError:
+            if _load_policy_weights():
+                return
+            raise
         return
 
     try:

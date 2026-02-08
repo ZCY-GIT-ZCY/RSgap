@@ -125,11 +125,12 @@ def _load_checkpoint_compatible(runner: OnPolicyRunner, resume_path: str) -> Non
     except Exception:
         checkpoint = None
 
-    if isinstance(checkpoint, dict) and "iter" in checkpoint:
-        runner.load(resume_path)
-        return
-
-    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+    def _load_policy_weights() -> bool:
+        if not isinstance(checkpoint, dict):
+            return False
+        state = checkpoint.get("model_state_dict") or checkpoint.get("state_dict")
+        if state is None:
+            return False
         policy = None
         if hasattr(runner.alg, "policy"):
             policy = runner.alg.policy
@@ -138,7 +139,7 @@ def _load_checkpoint_compatible(runner: OnPolicyRunner, resume_path: str) -> Non
         if policy is None:
             raise RuntimeError("Unsupported runner: no policy/actor_critic to load.")
 
-        load_result = policy.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        load_result = policy.load_state_dict(state, strict=False)
         missing = getattr(load_result, "missing_keys", None)
         unexpected = getattr(load_result, "unexpected_keys", None)
         if missing is not None or unexpected is not None:
@@ -149,8 +150,20 @@ def _load_checkpoint_compatible(runner: OnPolicyRunner, resume_path: str) -> Non
         if obs_norm_state is not None and getattr(runner, "obs_normalizer", None) is not None:
             runner.obs_normalizer.load_state_dict(obs_norm_state, strict=False)
 
-        runner.current_learning_iteration = int(checkpoint.get("iteration", 0))
-        print("[INFO] Loaded pretrain checkpoint (weights only). Optimizer reset.")
+        runner.current_learning_iteration = int(checkpoint.get("iteration", checkpoint.get("iter", 0)))
+        print("[INFO] Loaded checkpoint (weights only). Optimizer reset.")
+        return True
+
+    if _load_policy_weights():
+        return
+
+    if isinstance(checkpoint, dict) and "iter" in checkpoint:
+        try:
+            runner.load(resume_path)
+        except KeyError:
+            if _load_policy_weights():
+                return
+            raise
         return
 
     runner.load(resume_path)
