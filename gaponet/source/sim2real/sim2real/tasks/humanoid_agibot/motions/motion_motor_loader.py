@@ -65,6 +65,8 @@ class MotionLoaderMotor:
             self._dof_names = ROBOT_BODY_JOINT_NAME_DICT[f"{robot_name}_joints"]
         self.motion_index = 10       # train dataset
         self.mode = mode
+        # number of frames to skip at head/tail when sampling (train only)
+        self.sample_edge = 0
         if self.mode == "play":
             self.sample_time = 0
             self.motion_index = 0    # 0-10 test dataset
@@ -265,12 +267,20 @@ class MotionLoaderMotor:
         """
         if self.mode == "train":
             motion_indices = torch.randint(low=0, high=self.motion_num, size=(num_samples,), device=self.device, dtype=torch.long)
-            if randomize_start: 
-                time_indices = torch.rand(num_samples, device=self.device, dtype=torch.float32) * self.motion_len[motion_indices]
-                time_indices = time_indices.long() - min_available_length
-                time_indices = torch.clamp(time_indices, min=0)
+            edge = int(self.sample_edge)
+            motion_len = self.motion_len[motion_indices]
+            min_time = torch.full_like(motion_len, edge)
+            # Ensure upper bound leaves room for min_available_length and tail edge.
+            max_time = motion_len - edge - min_available_length
+            # If motion is too short, fall back to start.
+            max_time = torch.where(max_time >= min_time, max_time, min_time)
+            if randomize_start:
+                # Uniform integer in [min_time, max_time]
+                rand = torch.rand(num_samples, device=self.device, dtype=torch.float32)
+                span = (max_time - min_time + 1).to(torch.float32)
+                time_indices = (min_time.to(torch.float32) + rand * span).floor().to(torch.long)
             else:
-                time_indices = torch.zeros((num_samples,), device=self.device, dtype=torch.long)
+                time_indices = min_time.to(torch.long)
         if self.mode == "play":
             # motion_indices = torch.randint(low=0, high=self.motion_num, size=(num_samples,), device=self.device, dtype=torch.long)
             motion_indices = torch.arange(end=num_samples, device=self.device, dtype=torch.long) + self.sample_time

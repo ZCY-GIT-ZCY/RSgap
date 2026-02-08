@@ -56,6 +56,8 @@ class HumanoidOperatorEnv(DirectRLEnv):
 
         # load motion
         self._motion_loader = MotionLoaderMotor(motion_file=self.cfg.train_motion_file if self.mode == "train" else self.cfg.test_motion_file, device=self.device, mode=self.mode, robot_name=self.cfg.robot_name)  # type: ignore
+        # Skip head/tail frames for training/pretrain sampling.
+        self._motion_loader.sample_edge = int(getattr(self.cfg, "sample_edge_steps", 0))
         self.num_dofs = self._motion_loader.num_dofs
 
         # Map motion DOFs to robot joint indices (robot has more joints than motion DOFs)

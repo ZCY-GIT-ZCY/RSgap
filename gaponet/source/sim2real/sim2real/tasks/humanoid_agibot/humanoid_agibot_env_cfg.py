@@ -60,6 +60,8 @@ class HumanoidOperatorEnvCfg(DirectRLEnvCfg):
     train_motion_file: str
     reference_body = "base_link"
     reset_strategy = "random"  # default, random, random-start
+    # skip head/tail steps when sampling training frames
+    sample_edge_steps = 50
 
     # simulation
     sim: SimulationCfg = SimulationCfg(
