@@ -251,6 +251,7 @@ class DataLoader:
         self.dataset_path = Path(dataset_path)
         self.meta_path = self.dataset_path / "meta"
         self.data_path = self.dataset_path / "data"
+        self._episode_path_cache: Dict[int, Path] = {}
         
         # 加载配置
         info_path = self.meta_path / "info.json"
@@ -285,7 +286,16 @@ class DataLoader:
         )
         
         if not parquet_path.exists():
-            raise FileNotFoundError(f"Episode 文件不存在: {parquet_path}")
+            cached = self._episode_path_cache.get(episode_index)
+            if cached is not None and cached.exists():
+                parquet_path = cached
+            else:
+                matches = list(self.data_path.rglob(f"episode_{episode_index:06d}.parquet"))
+                if matches:
+                    parquet_path = matches[0]
+                    self._episode_path_cache[episode_index] = parquet_path
+                else:
+                    raise FileNotFoundError(f"Episode 文件不存在: {parquet_path}")
         
         # 读取数据
         df = pd.read_parquet(parquet_path)
