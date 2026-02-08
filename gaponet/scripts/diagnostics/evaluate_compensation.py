@@ -437,7 +437,7 @@ def main() -> int:
     target_delta_deg = np.degrees(target_delta_arr)
 
     dof_names = list(env_comp_unwrapped._motion_loader.dof_names)
-    joint_count = min(18, len(dof_names))
+    joint_count = len(dof_names)
 
     plot_dir = Path(args.plot_dir) / f"episode{args.motion_index:03d}"
     plot_dir.mkdir(parents=True, exist_ok=True)

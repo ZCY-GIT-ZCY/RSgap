@@ -454,7 +454,7 @@ def main() -> int:
         joint_position = _interp_to_target_timestamps(unique_t, parquet["joint_position"][order][unique_idx], target_ts)
         joint_current = _interp_to_target_timestamps(unique_t, parquet["joint_current"][order][unique_idx], target_ts)
 
-        # Build per-joint current aligned to dof order (head/gripper -> NaN)
+        # Build per-joint current aligned to dof order (head -> NaN)
         current_full = np.full((joint_current.shape[0], sim_arr.shape[1]), np.nan, dtype=np.float64)
         current_full[:, 2:16] = joint_current
 

@@ -23,7 +23,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Set
 
 import numpy as np
 
@@ -58,6 +58,23 @@ def parse_episode_indices(episode_arg: str, total_episodes: int) -> List[int]:
     # Remove duplicates and out-of-range values
     indices = sorted({i for i in indices if 0 <= i < total_episodes})
     return indices
+
+
+def scan_episode_indices(data_root: Path) -> List[int]:
+    """Scan chunk directories for episode_*.parquet and return sorted indices."""
+    if not data_root.exists():
+        raise FileNotFoundError(f"Data path not found: {data_root}")
+    indices: Set[int] = set()
+    for path in data_root.rglob("episode_*.parquet"):
+        stem = path.stem  # episode_000123
+        if not stem.startswith("episode_"):
+            continue
+        suffix = stem.split("episode_", 1)[-1]
+        try:
+            indices.add(int(suffix))
+        except ValueError:
+            continue
+    return sorted(indices)
 
 
 def compute_velocity(positions: np.ndarray, timestamps: np.ndarray, fallback_dt: float) -> np.ndarray:
@@ -105,6 +122,13 @@ def main() -> int:
         help="Episode indices: 'all', '0,1,2', or '0-10'",
     )
     parser.add_argument(
+        "--no-scan-data",
+        action="store_false",
+        dest="scan_data",
+        default=True,
+        help="Disable scanning data/chunk-* when --episodes=all.",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default=None,
@@ -135,11 +159,17 @@ def main() -> int:
 
     loader = DataLoader(str(dataset_path))
     total_episodes = loader.get_episode_count()
-    episode_indices = parse_episode_indices(args.episodes, total_episodes)
+    if args.episodes.strip().lower() == "all" and args.scan_data:
+        data_root = dataset_path / "data"
+        episode_indices = scan_episode_indices(data_root)
+        if not episode_indices:
+            raise RuntimeError(f"No episode_*.parquet found under: {data_root}")
+    else:
+        episode_indices = parse_episode_indices(args.episodes, total_episodes)
     if not episode_indices:
         raise ValueError(f"No valid episodes parsed from '{args.episodes}'")
 
-    joint_names = JointNameMapper.get_joint_names()
+    joint_names = JointNameMapper.get_joint_names(include_gripper=False)
     num_dofs = len(joint_names)
 
     real_positions_list: List[np.ndarray] = []
