@@ -246,7 +246,7 @@ def main() -> int:
     else:
         for ep in episode_indices:
             frames = loader.load_episode(ep)
-        if not frames:
+            if not frames:
                 print(f"[Skip] Episode {ep}: empty")
                 continue
 
