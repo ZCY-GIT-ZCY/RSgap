@@ -205,7 +205,7 @@ def main() -> int:
     if not episode_indices:
         raise ValueError(f"No valid episodes parsed from '{args.episodes}'")
 
-    joint_names = JointNameMapper.get_joint_names(include_gripper=False)
+    joint_names = JointNameMapper.get_joint_names(include_gripper=False, include_head=False)
     num_dofs = len(joint_names)
 
     data = np.load(npz_path, allow_pickle=True)

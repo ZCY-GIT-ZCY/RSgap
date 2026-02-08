@@ -45,7 +45,7 @@ class HumanoidOperatorEnvCfg(DirectRLEnvCfg):
 
     # spaces
     observation_space = 0
-    action_space = 16
+    action_space = 14
     state_space = 0
 
     # action regularization
@@ -94,9 +94,9 @@ class HumanoidOperatorEnvCfg(DirectRLEnvCfg):
     add_model_history = True
     model_history_length = 4  # must match model_history_length in model config
     model_initial_fill_length = 4
-    model_history_dim = 48  # 3 * 16 joints
+    model_history_dim = 42  # 3 * 14 joints
 
-    sensor_dim = 32  # pos + vel for 16 joints
+    sensor_dim = 28  # pos + vel for 14 joints
     sensor_decimation = 1
 
     add_noise = True
