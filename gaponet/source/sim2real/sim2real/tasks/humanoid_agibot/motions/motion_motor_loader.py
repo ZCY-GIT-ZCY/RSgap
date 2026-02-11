@@ -30,13 +30,20 @@ class MotionLoaderMotor:
             AssertionError: If the specified motion file doesn't exist.
         """
         assert os.path.isfile(motion_file), f"Invalid file path: {motion_file}"
-        # Enable traceback dumps for hangs (send SIGUSR1 to dump stacks)
+        # Optional hang debug dump (disabled by default).
+        # Set SIM2REAL_FAULTHANDLER_INTERVAL_SEC > 0 to enable periodic dumps.
         faulthandler.enable()
         try:
             faulthandler.register(signal.SIGUSR1)
         except Exception:
             pass
-        faulthandler.dump_traceback_later(60, repeat=True)
+        interval_sec = 0.0
+        try:
+            interval_sec = float(os.getenv("SIM2REAL_FAULTHANDLER_INTERVAL_SEC", "0"))
+        except Exception:
+            interval_sec = 0.0
+        if interval_sec > 0.0:
+            faulthandler.dump_traceback_later(interval_sec, repeat=True)
         # Compatibility shim: some motion npz files were pickled with numpy 2.x
         # which references "numpy._core" during unpickle. Alias it to numpy.core.
         import sys
