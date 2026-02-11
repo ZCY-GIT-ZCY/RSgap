@@ -281,7 +281,11 @@ def main() -> int:
     episodes_out_dir = output_dir / "episodes"
     summary_csv_path = output_dir / "episode_metrics.csv"
 
+    app_launcher = AppLauncher(args)
+    simulation_app = app_launcher.app
+
     # Ensure task package import works from repo layout.
+    # NOTE: keep imports after AppLauncher, consistent with training scripts.
     repo_root = Path(__file__).resolve().parents[2]
     sim2real_src = repo_root / "gaponet" / "source" / "sim2real"
     sim2real_assets_src = repo_root / "gaponet" / "source" / "sim2real_assets"
@@ -290,9 +294,6 @@ def main() -> int:
             sys.path.insert(0, str(p))
     import sim2real.tasks.humanoid_agibot  # noqa: F401
     from sim2real.tasks.humanoid_agibot.humanoid_agibot_env_cfg import HumanoidOperatorEnvCfg
-
-    app_launcher = AppLauncher(args)
-    simulation_app = app_launcher.app
 
     env_cfg = HumanoidOperatorEnvCfg()
     env_cfg.scene.num_envs = int(args.num_envs)
