@@ -997,9 +997,17 @@ class HumanoidOperatorEnv(DirectRLEnv):
         unfinished_motion = self._motion_loader.motion_len[self.motion_indices] > (self.time_indices + 1)
         self.time_indices[unfinished_motion] += 1
 
+        gap_done = torch.zeros_like(unfinished_motion)
+        if self.mode != "play" and getattr(self.cfg, "online_gap_filter", False):
+            real_dof_positions = self._motion_loader.dof_positions[self.motion_indices, time_indices_step]
+            robot_dof_positions = self.robot.data.joint_pos[:, self.motion_joint_ids]
+            mean_abs_pos_err = torch.mean(torch.abs(real_dof_positions - robot_dof_positions), dim=1)
+            gap_threshold = float(np.deg2rad(getattr(self.cfg, "online_gap_deg", 5.0)))
+            gap_done = mean_abs_pos_err > gap_threshold
+
         rewards = self._get_rewards(motion_indices=self.motion_indices, time_indices=time_indices_step)
         rewards = rewards * unfinished_motion
-        dones = ~unfinished_motion
+        dones = (~unfinished_motion) | gap_done
 
         self.sample_all_environments(env_ids=self._ALL_INDICES[dones])
 
@@ -1020,6 +1028,7 @@ class HumanoidOperatorEnv(DirectRLEnv):
                 ),
                 dim=1,
             ),
+            'Train/gap_done_ratio': gap_done.float(),
         }}
 
 
