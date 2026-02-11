@@ -404,10 +404,11 @@ class OperatorRunner(OnPolicyRunner):
             stop = time.time()
             learn_time = stop - start
             self.current_learning_iteration = it
+            mean_gap_done_ratio = statistics.mean(gap_done_buffer) if len(gap_done_buffer) > 0 else 0.0
             if self.log_dir is not None and not self.disable_logs and len(abs_err_buffer) > 0:
                 self.writer.add_scalar("Train/mean_abs_pos_err", statistics.mean(abs_err_buffer), it)
             if self.log_dir is not None and not self.disable_logs and len(gap_done_buffer) > 0:
-                self.writer.add_scalar("Train/mean_gap_done_ratio", statistics.mean(gap_done_buffer), it)
+                self.writer.add_scalar("Train/mean_gap_done_ratio", mean_gap_done_ratio, it)
             # log info
             if self.log_dir is not None and not self.disable_logs:
                 # Log information
@@ -514,7 +515,8 @@ class OperatorRunner(OnPolicyRunner):
         if len(locs.get("gap_done_buffer", [])) > 0:
             mean_gap_done_ratio = statistics.mean(locs["gap_done_buffer"])
             self.writer.add_scalar("Train/mean_gap_done_ratio", mean_gap_done_ratio, locs["it"])
-            ep_string += f"""{f'Train/mean_gap_done_ratio:':>{pad}} {mean_gap_done_ratio:.4f}\n"""
+        if "mean_gap_done_ratio" in locs:
+            ep_string += f"""{f'Train/mean_gap_done_ratio:':>{pad}} {float(locs['mean_gap_done_ratio']):.4f}\n"""
 
         if len(locs["rewbuffer"]) > 0:
             # everything else
