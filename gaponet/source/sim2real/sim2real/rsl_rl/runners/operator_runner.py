@@ -262,6 +262,7 @@ class OperatorRunner(OnPolicyRunner):
         rewbuffer = deque(maxlen=100)
         lenbuffer = deque(maxlen=100)
         abs_err_buffer = deque(maxlen=100)
+        gap_done_buffer = deque(maxlen=100)
         cur_reward_sum = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
         cur_episode_length = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
 
@@ -369,6 +370,11 @@ class OperatorRunner(OnPolicyRunner):
                                     if isinstance(val, torch.Tensor):
                                         val = val.detach().mean().item()
                                     abs_err_buffer.append(float(val))
+                                if "Train/gap_done_ratio" in infos["episode"]:
+                                    gap_val = infos["episode"]["Train/gap_done_ratio"]
+                                    if isinstance(gap_val, torch.Tensor):
+                                        gap_val = gap_val.detach().mean().item()
+                                    gap_done_buffer.append(float(gap_val))
                             elif "log" in infos:
                                 ep_infos.append(infos["log"])
                             # Update rewards
@@ -400,6 +406,8 @@ class OperatorRunner(OnPolicyRunner):
             self.current_learning_iteration = it
             if self.log_dir is not None and not self.disable_logs and len(abs_err_buffer) > 0:
                 self.writer.add_scalar("Train/mean_abs_pos_err", statistics.mean(abs_err_buffer), it)
+            if self.log_dir is not None and not self.disable_logs and len(gap_done_buffer) > 0:
+                self.writer.add_scalar("Train/mean_gap_done_ratio", statistics.mean(gap_done_buffer), it)
             # log info
             if self.log_dir is not None and not self.disable_logs:
                 # Log information
@@ -503,6 +511,10 @@ class OperatorRunner(OnPolicyRunner):
                 statistics.mean(locs["abs_err_buffer"]),
                 locs["it"],
             )
+        if len(locs.get("gap_done_buffer", [])) > 0:
+            mean_gap_done_ratio = statistics.mean(locs["gap_done_buffer"])
+            self.writer.add_scalar("Train/mean_gap_done_ratio", mean_gap_done_ratio, locs["it"])
+            ep_string += f"""{f'Train/mean_gap_done_ratio:':>{pad}} {mean_gap_done_ratio:.4f}\n"""
 
         if len(locs["rewbuffer"]) > 0:
             # everything else
