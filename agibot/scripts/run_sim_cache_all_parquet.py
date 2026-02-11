@@ -121,6 +121,7 @@ def _run_one_episode(env_unwrapped, motion_index: int) -> Tuple[np.ndarray, np.n
 
 def _save_episode_npz(
     out_file: Path,
+    scan_index: int,
     episode_id: int,
     motion_index: int,
     sim_arr: np.ndarray,
@@ -131,6 +132,7 @@ def _save_episode_npz(
     out_file.parent.mkdir(parents=True, exist_ok=True)
     np.savez(
         out_file,
+        scan_index=np.int64(scan_index),
         episode_id=np.int64(episode_id),
         motion_index=np.int64(motion_index),
         sim_dof_positions=sim_arr.astype(np.float32),
@@ -144,6 +146,7 @@ def _save_episode_npz(
 def _write_summary_csv(rows: List[Dict[str, object]], csv_path: Path) -> None:
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
+        "scan_index",
         "episode_id",
         "motion_index",
         "status",
@@ -162,6 +165,7 @@ def _write_summary_csv(rows: List[Dict[str, object]], csv_path: Path) -> None:
 
 
 def _merge_episode_npz(episode_files: List[Path], out_file: Path) -> None:
+    scan_indices: List[int] = []
     episode_ids: List[int] = []
     motion_indices: List[int] = []
     sim_list: List[np.ndarray] = []
@@ -172,6 +176,7 @@ def _merge_episode_npz(episode_files: List[Path], out_file: Path) -> None:
 
     for f in episode_files:
         data = np.load(f, allow_pickle=True)
+        scan_indices.append(int(np.asarray(data["scan_index"]).item()))
         episode_ids.append(int(data["episode_id"]))
         motion_indices.append(int(data["motion_index"]))
         sim = np.asarray(data["sim_dof_positions"], dtype=np.float32)
@@ -195,6 +200,7 @@ def _merge_episode_npz(episode_files: List[Path], out_file: Path) -> None:
     out_file.parent.mkdir(parents=True, exist_ok=True)
     np.savez(
         out_file,
+        scan_indices=np.asarray(scan_indices, dtype=np.int64),
         episode_indices=np.asarray(episode_ids, dtype=np.int64),
         motion_indices=np.asarray(motion_indices, dtype=np.int64),
         sim_dof_positions=np.asarray(sim_list, dtype=object),
@@ -264,14 +270,10 @@ def main() -> int:
     if not episode_paths:
         raise RuntimeError(f"No episode parquet found under: {data_root}")
 
-    episode_id_to_path = {_parse_episode_id(p): p for p in episode_paths}
-    selected_episode_ids = _parse_episode_arg(args.episodes, sorted(episode_id_to_path.keys()))
-    if not selected_episode_ids:
+    total_parquet = len(episode_paths)
+    selected_scan_indices = _parse_episode_arg(args.episodes, list(range(total_parquet)))
+    if not selected_scan_indices:
         raise RuntimeError(f"No episodes selected by --episodes={args.episodes}")
-
-    # Motion order must follow sorted parquet paths.
-    sorted_ids = sorted(episode_id_to_path.keys())
-    episode_id_to_motion_index = {ep_id: i for i, ep_id in enumerate(sorted_ids)}
 
     motion_file = Path(args.motion_file).resolve() if args.motion_file else (dataset_path / "motion_agibot.npz").resolve()
     if not motion_file.exists():
@@ -308,15 +310,15 @@ def main() -> int:
     env = gym.make(args.task, cfg=env_cfg, render_mode=None)
     env_unwrapped = env.unwrapped
     motion_count = int(env_unwrapped._motion_loader.motion_num)
-    if motion_count != len(sorted_ids):
+    if motion_count != total_parquet:
         raise RuntimeError(
             "Motion/parquet count mismatch. "
-            f"motion_count={motion_count}, parquet_count={len(sorted_ids)}. "
+            f"motion_count={motion_count}, parquet_count={total_parquet}. "
             "Please ensure motion_agibot.npz was generated from the same parquet set and ordering."
         )
     print(f"[Info] Dataset: {dataset_path}")
     print(f"[Info] Motion file: {motion_file}")
-    print(f"[Info] Episodes selected: {len(selected_episode_ids)}")
+    print(f"[Info] Episodes selected: {len(selected_scan_indices)}")
     print(f"[Info] Output dir: {output_dir}")
 
     rows: List[Dict[str, object]] = []
@@ -328,19 +330,25 @@ def main() -> int:
         with open(summary_csv_path, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for r in reader:
-                ep_id = int(r["episode_id"])
-                existing_done[ep_id] = r
+                if "scan_index" in r and r["scan_index"] != "":
+                    key = int(r["scan_index"])
+                else:
+                    # backward compatibility with older summary files
+                    key = int(r["episode_id"])
+                existing_done[key] = r
         print(f"[Info] Resume mode: found {len(existing_done)} rows in {summary_csv_path}")
 
-    total = len(selected_episode_ids)
+    total = len(selected_scan_indices)
     processed = 0
-    for i, episode_id in enumerate(selected_episode_ids, start=1):
-        motion_index = episode_id_to_motion_index[episode_id]
-        episode_file = episode_id_to_path[episode_id]
-        per_episode_out = episodes_out_dir / f"episode_{episode_id:06d}.npz"
+    for i, scan_index in enumerate(selected_scan_indices, start=1):
+        motion_index = scan_index
+        episode_file = episode_paths[scan_index]
+        episode_id = _parse_episode_id(episode_file)
+        per_episode_out = episodes_out_dir / f"scan_{scan_index:06d}_{episode_file.parent.name}_{episode_file.stem}.npz"
 
-        if not args.overwrite and per_episode_out.exists() and episode_id in existing_done:
-            row = dict(existing_done[episode_id])
+        if not args.overwrite and per_episode_out.exists() and scan_index in existing_done:
+            row = dict(existing_done[scan_index])
+            row["scan_index"] = int(row["scan_index"]) if "scan_index" in row and row["scan_index"] != "" else scan_index
             row["episode_id"] = int(row["episode_id"])
             row["motion_index"] = int(row["motion_index"])
             row["num_frames"] = int(row["num_frames"])
@@ -350,12 +358,13 @@ def main() -> int:
             row["mean_abs_err_deg"] = float(row["mean_abs_err_deg"])
             rows.append(row)
             saved_episode_files.append(per_episode_out)
-            print(f"[Skip] {i}/{total} episode={episode_id} cached")
+            print(f"[Skip] {i}/{total} scan_index={scan_index} episode={episode_id} cached")
             continue
 
         sim_arr, real_arr = _run_one_episode(env_unwrapped, motion_index)
         if sim_arr.shape[0] == 0:
             row = {
+                "scan_index": scan_index,
                 "episode_id": episode_id,
                 "motion_index": motion_index,
                 "status": "failed_empty",
@@ -367,16 +376,17 @@ def main() -> int:
                 "episode_file": str(episode_file),
             }
             rows.append(row)
-            print(f"[Warn] {i}/{total} episode={episode_id} empty rollout")
+            print(f"[Warn] {i}/{total} scan_index={scan_index} episode={episode_id} empty rollout")
             continue
 
         err = np.abs(sim_arr - real_arr)
         peak_err = float(np.max(err))
         mean_err = float(np.mean(err))
-        _save_episode_npz(per_episode_out, episode_id, motion_index, sim_arr, real_arr, peak_err, mean_err)
+        _save_episode_npz(per_episode_out, scan_index, episode_id, motion_index, sim_arr, real_arr, peak_err, mean_err)
         saved_episode_files.append(per_episode_out)
 
         row = {
+            "scan_index": scan_index,
             "episode_id": episode_id,
             "motion_index": motion_index,
             "status": "ok",
@@ -390,7 +400,7 @@ def main() -> int:
         rows.append(row)
         processed += 1
         print(
-            f"[OK] {i}/{total} episode={episode_id} motion_index={motion_index} "
+            f"[OK] {i}/{total} scan_index={scan_index} episode={episode_id} motion_index={motion_index} "
             f"frames={sim_arr.shape[0]} peak={peak_err:.6f}rad mean={mean_err:.6f}rad"
         )
 
