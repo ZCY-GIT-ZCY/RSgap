@@ -1,4 +1,9 @@
-agibot/data/
+agibot/data/*
+!agibot/data/H3_example/
+agibot/data/H3_example/*
+!agibot/data/H3_example/sim_cache/
+!agibot/data/H3_example/sim_cache/**
+
 sgae_file_process/source_data/
 logs/rsl_rl/
 outputs/
