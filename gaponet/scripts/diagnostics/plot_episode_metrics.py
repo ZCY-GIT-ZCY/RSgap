@@ -43,6 +43,17 @@ def main() -> int:
         action="store_true",
         help="Plot all joints for each episode.",
     )
+    parser.add_argument(
+        "--arm-only",
+        action="store_true",
+        help="Plot only arm joints (default behavior).",
+    )
+    parser.add_argument(
+        "--arm-dofs",
+        type=int,
+        default=14,
+        help="Number of arm joints to plot when --arm-only is used.",
+    )
     args = parser.parse_args()
 
     episodes_dir = Path(args.episodes_dir).resolve()
@@ -81,11 +92,17 @@ def main() -> int:
         abs_err = np.abs(sim_deg - real_deg)
         per_joint_mean = np.mean(abs_err, axis=0)
 
+        num_joints = sim_deg.shape[1]
+        arm_mask = np.arange(min(args.arm_dofs, num_joints))
+
         if args.plot_all_joints:
-            joint_idx = np.arange(sim_deg.shape[1])
+            joint_idx = np.arange(num_joints)
         else:
-            topk = min(args.plot_topk, sim_deg.shape[1])
+            topk = min(args.plot_topk, num_joints)
             joint_idx = np.argsort(-per_joint_mean)[:topk]
+
+        if args.arm_only or not args.plot_all_joints:
+            joint_idx = np.intersect1d(joint_idx, arm_mask)
 
         ep_dir = out_dir / ep_file.stem
         ep_dir.mkdir(parents=True, exist_ok=True)
