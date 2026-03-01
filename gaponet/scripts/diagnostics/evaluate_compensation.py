@@ -359,6 +359,13 @@ def main() -> int:
     env_comp_unwrapped.last_delta_action[:] = 0
     if hasattr(env_comp_unwrapped, "model_history"):
         env_comp_unwrapped.model_history[:] = 0
+    # CRITICAL: _sync_to_motion only resets the physics state but does NOT update
+    # env.motion_indices / env.time_indices.  Those are left over from the baseline
+    # loop, so compute_operator_observation() (called before the first step_operator)
+    # would read the wrong reference trajectory (stale time ≈ num_steps instead of
+    # args.time_index), producing a massive wrong delta on the very first action.
+    env_comp_unwrapped.motion_indices[:] = motion_indices
+    env_comp_unwrapped.time_indices[:] = time_indices
 
     sim_comp_traj = []
     target_traj = []
