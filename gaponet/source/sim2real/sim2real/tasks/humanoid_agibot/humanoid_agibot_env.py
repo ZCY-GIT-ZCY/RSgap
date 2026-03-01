@@ -84,6 +84,7 @@ class HumanoidOperatorEnv(DirectRLEnv):
         self.step_velocity = torch.zeros((self.num_envs, self.num_dofs), device=self.device)
 
         self.action_l2_coef = getattr(self.cfg, "action_l2_coef", 1.0e-3)
+        self.delta_smooth_coef = getattr(self.cfg, "delta_smooth_coef", 1.0e-3)
 
         self.sub_env_sensor_data = torch.zeros((self.num_sub_environments, self.num_sensor_positions, self.cfg.sensor_dim), device=self.device)
         self.sensor_data = torch.zeros((self.num_envs, self.num_sensor_positions, self.cfg.sensor_dim), device=self.device)
@@ -1184,7 +1185,12 @@ class HumanoidOperatorEnv(DirectRLEnv):
         velocity_diff = torch.mean(velocity_diff[:, joint_index], dim=1)   # shape: (num_envs, )
 
         action_l2 = torch.mean(self.delta_action ** 2, dim=1)
-        return position_diff + velocity_diff * 1e-2 + self.action_l2_coef * action_l2
+        return (
+            position_diff
+            + velocity_diff * 1e-2
+            + self.action_l2_coef * action_l2
+            + self.delta_smooth_coef * self._reward_delta_smoothness()
+        )
     
     def _reward_delta_smoothness(self):
         last_action = self.last_delta_action
@@ -1192,5 +1198,5 @@ class HumanoidOperatorEnv(DirectRLEnv):
 
         reward = (current_action - last_action) ** 2
         reward = torch.clamp(reward - 4e-1, min=0).sum(dim=1)
-        return reward * (~torch.all(torch.abs(last_action) < 1e-2, dim=1)) * 0
+        return reward * (~torch.all(torch.abs(last_action) < 1e-2, dim=1))
     

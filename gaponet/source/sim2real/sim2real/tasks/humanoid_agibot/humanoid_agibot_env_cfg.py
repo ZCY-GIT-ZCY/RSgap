@@ -49,7 +49,8 @@ class HumanoidOperatorEnvCfg(DirectRLEnvCfg):
     state_space = 0
 
     # action regularization
-    action_l2_coef = 1.0e-2
+    action_l2_coef = 10.0
+    delta_smooth_coef = 1.0e-3
 
     early_termination = True
     termination_height = 0.8
@@ -61,7 +62,7 @@ class HumanoidOperatorEnvCfg(DirectRLEnvCfg):
     reference_body = "base_link"
     reset_strategy = "random"  # default, random, random-start
     # skip head/tail steps when sampling training frames
-    sample_edge_steps = 300
+    sample_edge_steps = 150
     # filter training frames by sim-real joint error (degrees)
     filter_sim_real_gap = False
     sim_real_gap_deg = 5.0
