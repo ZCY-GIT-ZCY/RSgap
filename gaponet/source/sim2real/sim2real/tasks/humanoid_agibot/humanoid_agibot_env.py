@@ -500,8 +500,13 @@ class HumanoidOperatorEnv(DirectRLEnv):
 
         real_dof_positions = self._motion_loader.dof_positions[motion_indices, time_indices]
         robot_dof_positions = self.robot.data.joint_pos[:, self.motion_joint_ids]
-        mean_abs_pos_err = torch.mean(torch.abs(real_dof_positions - robot_dof_positions), dim=1)
-        self.extras["log"] = {"Train/mean_abs_pos_err": mean_abs_pos_err}
+        abs_pos_err = torch.abs(real_dof_positions - robot_dof_positions)
+        mean_abs_pos_err = torch.mean(abs_pos_err, dim=1)
+        max_abs_pos_err = torch.max(abs_pos_err, dim=1).values
+        self.extras["log"] = {
+            "Train/mean_abs_pos_err": mean_abs_pos_err,
+            "Train/max_abs_pos_err": max_abs_pos_err,
+        }
 
         return - ((36 / (2 * torch.pi)) ** 2) * self._reward_tracking(
             motion_indices=motion_indices,
@@ -1029,6 +1034,13 @@ class HumanoidOperatorEnv(DirectRLEnv):
                 ),
                 dim=1,
             ),
+            'Train/max_abs_pos_err': torch.max(
+                torch.abs(
+                    self._motion_loader.dof_positions[self.motion_indices, time_indices_step]
+                    - self.robot.data.joint_pos[:, self.motion_joint_ids]
+                ),
+                dim=1,
+            ).values,
             'Train/gap_done_ratio': gap_done.float(),
         }}
 

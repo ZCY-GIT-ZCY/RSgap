@@ -49,7 +49,7 @@ class HumanoidOperatorEnvCfg(DirectRLEnvCfg):
     state_space = 0
 
     # action regularization
-    action_l2_coef = 10.0
+    action_l2_coef = 1e-2
     delta_smooth_coef = 1.0e-3
 
     early_termination = True

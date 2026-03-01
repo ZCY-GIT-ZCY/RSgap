@@ -262,6 +262,7 @@ class OperatorRunner(OnPolicyRunner):
         rewbuffer = deque(maxlen=100)
         lenbuffer = deque(maxlen=100)
         abs_err_buffer = deque(maxlen=100)
+        max_err_buffer = deque(maxlen=100)
         gap_done_buffer = deque(maxlen=100)
         cur_reward_sum = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
         cur_episode_length = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
@@ -370,6 +371,11 @@ class OperatorRunner(OnPolicyRunner):
                                     if isinstance(val, torch.Tensor):
                                         val = val.detach().mean().item()
                                     abs_err_buffer.append(float(val))
+                                if "Train/max_abs_pos_err" in infos["episode"]:
+                                    max_val = infos["episode"]["Train/max_abs_pos_err"]
+                                    if isinstance(max_val, torch.Tensor):
+                                        max_val = max_val.detach().mean().item()
+                                    max_err_buffer.append(float(max_val))
                                 if "Train/gap_done_ratio" in infos["episode"]:
                                     gap_val = infos["episode"]["Train/gap_done_ratio"]
                                     if isinstance(gap_val, torch.Tensor):
@@ -407,6 +413,8 @@ class OperatorRunner(OnPolicyRunner):
             mean_gap_done_ratio = statistics.mean(gap_done_buffer) if len(gap_done_buffer) > 0 else 0.0
             if self.log_dir is not None and not self.disable_logs and len(abs_err_buffer) > 0:
                 self.writer.add_scalar("Train/mean_abs_pos_err", statistics.mean(abs_err_buffer), it)
+            if self.log_dir is not None and not self.disable_logs and len(max_err_buffer) > 0:
+                self.writer.add_scalar("Train/max_abs_pos_err", statistics.mean(max_err_buffer), it)
             if self.log_dir is not None and not self.disable_logs and len(gap_done_buffer) > 0:
                 self.writer.add_scalar("Train/mean_gap_done_ratio", mean_gap_done_ratio, it)
             # log info
@@ -510,6 +518,12 @@ class OperatorRunner(OnPolicyRunner):
             self.writer.add_scalar(
                 "Train/mean_abs_pos_err",
                 statistics.mean(locs["abs_err_buffer"]),
+                locs["it"],
+            )
+        if len(locs.get("max_err_buffer", [])) > 0:
+            self.writer.add_scalar(
+                "Train/max_abs_pos_err",
+                statistics.mean(locs["max_err_buffer"]),
                 locs["it"],
             )
         if len(locs.get("gap_done_buffer", [])) > 0:
