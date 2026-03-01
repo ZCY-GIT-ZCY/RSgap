@@ -45,7 +45,7 @@ class HumanoidOperatorEnvCfg(DirectRLEnvCfg):
 
     # spaces
     observation_space = 0
-    action_space = 14
+    action_space = 12
     state_space = 0
 
     # action regularization
@@ -61,7 +61,7 @@ class HumanoidOperatorEnvCfg(DirectRLEnvCfg):
     reference_body = "base_link"
     reset_strategy = "random"  # default, random, random-start
     # skip head/tail steps when sampling training frames
-    sample_edge_steps = 100
+    sample_edge_steps = 300
     # filter training frames by sim-real joint error (degrees)
     filter_sim_real_gap = False
     sim_real_gap_deg = 5.0
@@ -100,9 +100,9 @@ class HumanoidOperatorEnvCfg(DirectRLEnvCfg):
     add_model_history = True
     model_history_length = 4  # must match model_history_length in model config
     model_initial_fill_length = 4
-    model_history_dim = 42  # 3 * 14 joints
+    model_history_dim = 36  # 3 * 12 joints
 
-    sensor_dim = 28  # pos + vel for 14 joints
+    sensor_dim = 24  # pos + vel for 12 joints
     sensor_decimation = 1
 
     add_noise = True

@@ -17,8 +17,8 @@ AGIBOT G1 数据工具模块
   - [32:40]: 末端姿态四元数 (8维)
   - [40:48]: 手臂基座姿态 (8维)
   - [48:54]: 手臂基座位置 (6维)
-  - [54:68]: 关节位置 (14维: 左臂7+右臂7) ★ 核心
-  - [68:82]: 关节电流 (14维)
+    - [54:68]: 关节位置 (14维: 左臂7+右臂7) ★ 核心
+    - [68:82]: 关节电流 (14维)
   - [82:84]: 头部位置 (2维)
   - [84:86]: 腰部位置 (2维)
   - [86:89]: 底盘位置 (3维) - 忽略
@@ -30,7 +30,7 @@ AGIBOT G1 数据工具模块
   - [1]: 右夹爪目标 [0,120]
   - [2:8]: 末端目标位置 (6维)
   - [8:16]: 末端目标姿态 (8维)
-  - [16:30]: 关节目标位置 (14维) 核心
+    - [16:30]: 关节目标位置 (14维) 核心
   - [30:32]: 头部目标 (2维)
   - [32:34]: 腰部目标 (2维)
   - [34:36]: 底盘速度 (2维) - 忽略
@@ -93,9 +93,9 @@ class FrameRecord:
 
     # 解析后的关节数据 (SI 单位: 弧度)
     # 注意: 腰部关节已固定，头部/夹爪也不再包含在关节数据中
-    real_joint_pos: np.ndarray     # 14维: 左臂7+右臂7
+    real_joint_pos: np.ndarray     # 12维: 左臂6+右臂6 (去掉 joint1)
     real_joint_vel: Optional[np.ndarray] = None  # 速度 (如果可用)
-    target_joint_pos: np.ndarray = None  # 14维: 来自 action
+    target_joint_pos: np.ndarray = None  # 12维: 来自 action
     
     # 夹爪数据 (原始值 [0,120])
     real_gripper_l: float = 0.0
@@ -346,29 +346,29 @@ class DataLoader:
     
     def _extract_full_joint_positions(self, state: np.ndarray) -> np.ndarray:
         """
-        从 observation.state 提取完整关节位置 (14维)
+        从 observation.state 提取完整关节位置 (12维)
 
         顺序:
-        - 左臂 (state[54:61])
-        - 右臂 (state[61:68])
+        - 左臂 (state[54:61]) 去掉 joint1 => state[55:61]
+        - 右臂 (state[61:68]) 去掉 joint1 => state[62:68]
         - 头部/夹爪已从训练关节中移除
         """
-        arm_l = state[54:61]   # 7维
-        arm_r = state[61:68]   # 7维
+        arm_l = state[55:61]   # 6维 (去掉 joint1)
+        arm_r = state[62:68]   # 6维 (去掉 joint1)
         return np.concatenate([arm_l, arm_r])
     
     def _extract_full_joint_positions_from_action(self, action: np.ndarray) -> np.ndarray:
         """
-        从 action 提取目标关节位置 (14维)
+        从 action 提取目标关节位置 (12维)
 
         顺序:
-        - 左臂 (action[16:23])
-        - 右臂 (action[23:30])
+        - 左臂 (action[16:23]) 去掉 joint1 => action[17:23]
+        - 右臂 (action[23:30]) 去掉 joint1 => action[24:30]
         - 头部/夹爪已从训练关节中移除
 
         """
-        arm_l = action[16:23]  # 7维
-        arm_r = action[23:30]  # 7维
+        arm_l = action[17:23]  # 6维 (去掉 joint1)
+        arm_r = action[24:30]  # 6维 (去掉 joint1)
         return np.concatenate([arm_l, arm_r])
 
     def _convert_gripper_raw_to_joint(self, value: float) -> float:
@@ -538,18 +538,16 @@ class JointNameMapper:
     将数据索引映射到 URDF 关节名称
     """
     
-    # 14维关节顺序 (与数据提取顺序一致，腰部/头部已固定)
-    JOINT_NAMES_14D = [
-        # 左臂 (7)
-        "idx21_arm_l_joint1",
+    # 12维关节顺序 (与数据提取顺序一致，去掉左右 arm_joint1)
+    JOINT_NAMES_12D = [
+        # 左臂 (6)
         "idx22_arm_l_joint2",
         "idx23_arm_l_joint3",
         "idx24_arm_l_joint4",
         "idx25_arm_l_joint5",
         "idx26_arm_l_joint6",
         "idx27_arm_l_joint7",
-        # 右臂 (7)
-        "idx61_arm_r_joint1",
+        # 右臂 (6)
         "idx62_arm_r_joint2",
         "idx63_arm_r_joint3",
         "idx64_arm_r_joint4",
@@ -558,9 +556,9 @@ class JointNameMapper:
         "idx67_arm_r_joint7",
     ]
 
-    # 分组索引 (14维)
-    ARM_L_INDICES = (0, 7)
-    ARM_R_INDICES = (7, 14)
+    # 分组索引 (12维)
+    ARM_L_INDICES = (0, 6)
+    ARM_R_INDICES = (6, 12)
 
     # 夹爪原始范围 [0, 120] 映射到 URDF 关节范围 [0, pi/4]
     GRIPPER_RAW_MIN = 0.0
@@ -572,7 +570,7 @@ class JointNameMapper:
     JOINT_NAMES_16D = [
         "idx11_head_joint1",
         "idx12_head_joint2",
-    ] + JOINT_NAMES_14D
+    ] + JOINT_NAMES_12D
 
     # 18维关节顺序 (加入夹爪) - 保留供离线分析使用
     JOINT_NAMES_18D = JOINT_NAMES_16D + [
@@ -586,17 +584,17 @@ class JointNameMapper:
             return cls.JOINT_NAMES_18D.copy()
         if include_head:
             return cls.JOINT_NAMES_16D.copy()
-        return cls.JOINT_NAMES_14D.copy()
+        return cls.JOINT_NAMES_12D.copy()
     
     @classmethod
     def get_group_indices(cls, group: str) -> Tuple[int, int]:
-        """获取关节组的索引范围 (14维)"""
+        """获取关节组的索引范围 (12维)"""
         groups = {
             "arm_l": cls.ARM_L_INDICES,
             "arm_r": cls.ARM_R_INDICES,
-            "gripper": (14, 14),
+            "gripper": (12, 12),
         }
-        return groups.get(group, (0, 14))
+        return groups.get(group, (0, 12))
 
 
 # =============================================================================
@@ -622,8 +620,8 @@ def frames_to_arrays(frames: List[FrameRecord]) -> Dict[str, np.ndarray]:
     Returns:
         {
             "timestamps": (N,),
-            "real_joint_pos": (N, 14),
-            "target_joint_pos": (N, 14),
+            "real_joint_pos": (N, 12),
+            "target_joint_pos": (N, 12),
             "real_gripper_l": (N,),
             "real_gripper_r": (N,),
             "real_end_effector_pos": (N, 6),
@@ -677,6 +675,6 @@ if __name__ == "__main__":
     print(f"\n时间戳有效性: {valid}")
     
     # 打印关节名称
-    print(f"\n关节名称 14维):")
+    print(f"\n关节名称 12维):")
     for i, name in enumerate(JointNameMapper.get_joint_names()):
         print(f"  [{i:2d}] {name}")

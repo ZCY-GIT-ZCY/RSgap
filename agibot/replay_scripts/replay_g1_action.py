@@ -61,12 +61,12 @@ class SimDataRecorder:
     
     # URDF 关节名到数据索引的映射
     JOINT_NAME_TO_ARM_IDX = {
-        "idx21_arm_l_joint1": 0, "idx22_arm_l_joint2": 1, "idx23_arm_l_joint3": 2,
-        "idx24_arm_l_joint4": 3, "idx25_arm_l_joint5": 4, "idx26_arm_l_joint6": 5,
-        "idx27_arm_l_joint7": 6,
-        "idx61_arm_r_joint1": 7, "idx62_arm_r_joint2": 8, "idx63_arm_r_joint3": 9,
-        "idx64_arm_r_joint4": 10, "idx65_arm_r_joint5": 11, "idx66_arm_r_joint6": 12,
-        "idx67_arm_r_joint7": 13,
+        "idx22_arm_l_joint2": 0, "idx23_arm_l_joint3": 1,
+        "idx24_arm_l_joint4": 2, "idx25_arm_l_joint5": 3, "idx26_arm_l_joint6": 4,
+        "idx27_arm_l_joint7": 5,
+        "idx62_arm_r_joint2": 6, "idx63_arm_r_joint3": 7,
+        "idx64_arm_r_joint4": 8, "idx65_arm_r_joint5": 9, "idx66_arm_r_joint6": 10,
+        "idx67_arm_r_joint7": 11,
     }
     
     JOINT_NAME_TO_HEAD_IDX = {"idx11_head_joint1": 0, "idx12_head_joint2": 1}
@@ -113,8 +113,8 @@ class SimDataRecorder:
             idx = self.joint_name_to_idx[self.GRIPPER_R_MASTER]
             right_effector = self._convert_gripper_urdf_to_state(pos[idx])
         
-        # 提取关节位置 (14维)
-        joint_position = np.zeros(14, dtype=np.float32)
+        # 提取关节位置 (12维)
+        joint_position = np.zeros(12, dtype=np.float32)
         for joint_name, data_idx in self.JOINT_NAME_TO_ARM_IDX.items():
             if joint_name in self.joint_name_to_idx:
                 joint_position[data_idx] = pos[self.joint_name_to_idx[joint_name]]

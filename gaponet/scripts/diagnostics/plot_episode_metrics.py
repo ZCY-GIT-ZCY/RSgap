@@ -51,7 +51,7 @@ def main() -> int:
     parser.add_argument(
         "--arm-dofs",
         type=int,
-        default=14,
+        default=12,
         help="Number of arm joints to plot when --arm-only is used.",
     )
     args = parser.parse_args()

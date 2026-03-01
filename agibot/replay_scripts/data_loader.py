@@ -46,7 +46,7 @@ class FrameData:
     action: np.ndarray  # 36维
     
     # 解析后的关节数据
-    joint_positions: Optional[np.ndarray] = None  # 14维 (左臂7+右臂7)
+    joint_positions: Optional[np.ndarray] = None  # 12维 (左臂6+右臂6，去掉 joint1)
     head_positions: Optional[np.ndarray] = None   # 2维
     waist_positions: Optional[np.ndarray] = None  # 2维
     left_gripper: Optional[float] = None
@@ -208,9 +208,10 @@ class AgibotDataLoader:
         return frames
     
     def _extract_joint_positions(self, state: np.ndarray) -> np.ndarray:
-        """提取14维关节角度 (左臂7 + 右臂7)"""
-        start, end = self.STATE_INDICES["joint_position"]
-        return state[start:end]
+        """提取12维关节角度 (左臂6 + 右臂6，去掉 joint1)"""
+        arm_l = state[55:61]
+        arm_r = state[62:68]
+        return np.concatenate([arm_l, arm_r])
     
     def _extract_head_positions(self, state: np.ndarray) -> np.ndarray:
         """提取头部位置 (2维)"""
@@ -231,7 +232,7 @@ class AgibotDataLoader:
             
         Returns:
             timestamps: (N,) 时间戳数组
-            joint_positions: (N, 14) 关节角度数组
+            joint_positions: (N, 12) 关节角度数组
         """
         frames = self.load_episode(episode_index)
         

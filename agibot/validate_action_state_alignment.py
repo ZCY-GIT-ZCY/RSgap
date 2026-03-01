@@ -17,9 +17,9 @@ def compute_corr(a, b):
     return np.array(corrs)
 
 def analyze_episode(frames, max_shift=2):
-    # 只看关节：observation[54-67] vs action[16-29]，共14维
-    obs = np.stack([f.observation_state[54:68] for f in frames])  # shape (N,14)
-    act = np.stack([f.action[16:30] for f in frames])             # shape (N,14)
+    # 只看关节：去掉左右 joint1 (index 0,7)
+    obs = np.stack([np.concatenate([f.observation_state[55:61], f.observation_state[62:68]]) for f in frames])  # (N,12)
+    act = np.stack([np.concatenate([f.action[17:23], f.action[24:30]]) for f in frames])  # (N,12)
     n = len(frames)
     results = []
     for shift in range(-max_shift, max_shift+1):
