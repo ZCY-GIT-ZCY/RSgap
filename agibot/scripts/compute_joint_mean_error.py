@@ -38,8 +38,8 @@ def main() -> int:
     if not files:
         raise RuntimeError(f"No episode npz files found under: {episodes_dir}")
 
-    sum_err = None
-    count = 0
+    err_chunks: List[np.ndarray] = []
+    episode_peak_list: List[np.ndarray] = []
 
     for f in files:
         data = np.load(f, allow_pickle=True)
@@ -53,25 +53,46 @@ def main() -> int:
         sim = sim[:min_len]
         real = real[:min_len]
         err = np.abs(sim - real)
-        if sum_err is None:
-            sum_err = np.sum(err, axis=0)
-        else:
-            sum_err += np.sum(err, axis=0)
-        count += err.shape[0]
+        err_chunks.append(err)
+        episode_peak_list.append(np.max(err, axis=0))
 
-    if sum_err is None or count == 0:
+    if not err_chunks:
         raise RuntimeError("No valid sim/real data found in episodes.")
 
-    mean_err = sum_err / float(count)
+    all_err = np.concatenate(err_chunks, axis=0)
+    mean_err = np.mean(all_err, axis=0)
+    median_err = np.median(all_err, axis=0)
+    var_err = np.var(all_err, axis=0)
+    episode_peak = np.max(np.stack(episode_peak_list, axis=0), axis=0)
 
     out_csv = Path(args.out_csv).resolve()
     out_csv.parent.mkdir(parents=True, exist_ok=True)
 
     with out_csv.open("w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["joint_index", "mean_abs_err_rad", "mean_abs_err_deg"])
-        for idx, val in enumerate(mean_err):
-            writer.writerow([idx, float(val), float(np.degrees(val))])
+        writer.writerow([
+            "joint_index",
+            "mean_abs_err_rad",
+            "median_abs_err_rad",
+            "var_abs_err_rad",
+            "episode_peak_abs_err_rad",
+            "mean_abs_err_deg",
+            "median_abs_err_deg",
+            "var_abs_err_deg",
+            "episode_peak_abs_err_deg",
+        ])
+        for idx in range(mean_err.shape[0]):
+            writer.writerow([
+                idx,
+                float(mean_err[idx]),
+                float(median_err[idx]),
+                float(var_err[idx]),
+                float(episode_peak[idx]),
+                float(np.degrees(mean_err[idx])),
+                float(np.degrees(median_err[idx])),
+                float(np.degrees(var_err[idx])),
+                float(np.degrees(episode_peak[idx])),
+            ])
 
     print(f"[INFO] Saved: {out_csv}")
     return 0
