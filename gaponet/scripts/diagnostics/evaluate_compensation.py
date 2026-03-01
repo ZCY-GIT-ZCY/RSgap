@@ -373,29 +373,44 @@ def main() -> int:
     prev_joint_pos = env_comp_unwrapped.robot.data.joint_pos[:, env_comp_unwrapped.motion_joint_ids].clone()
     prev_joint_vel = env_comp_unwrapped.robot.data.joint_vel[:, env_comp_unwrapped.motion_joint_ids].clone()
 
+    # -------------------------------------------------------------------------
+    # Initialize sensor ONCE before the loop, exactly mirroring training:
+    #   operator_runner.py calls compute_model_observation(update_history=False)
+    #   + set_sensor_data before the inner loop, then compute_operator_observation
+    #   for the first obs.  Inside the loop it does the sensor update only
+    #   AFTER step_operator (with update_history=True) so that model_history
+    #   stored in the sensor always lags by one step (h before the current step's
+    #   update).  Re-computing the sensor at the START of every eval step (as the
+    #   old code did) overwrites the correctly-lagged sensor with one that uses the
+    #   already-updated history, causing a systematic off-by-one mismatch from
+    #   step 1 onwards.
+    # -------------------------------------------------------------------------
+    if use_model_sensor:
+        with torch.no_grad():
+            _model_obs_init = env_comp_unwrapped.compute_model_observation(
+                add_noise=False, update_history=False
+            ).to(device)
+            _sensor_init = ppo_runner.alg.policy.model_sensor(_model_obs_init).reshape(
+                env_comp_unwrapped.num_envs, env_comp_unwrapped.num_sensor_positions, -1
+            )
+        env_comp_unwrapped.set_sensor_data(_sensor_init)
+    else:
+        # Non-model-sensor initialisation (delta_sensor_value branch reuses prev_joint_pos).
+        joint_pos = env_comp_unwrapped.robot.data.joint_pos[:, env_comp_unwrapped.motion_joint_ids]
+        joint_vel = env_comp_unwrapped.robot.data.joint_vel[:, env_comp_unwrapped.motion_joint_ids]
+        sensor = torch.cat([joint_pos, joint_vel * env_comp_unwrapped.step_dt], dim=1)
+        sensor = sensor.view(
+            env_comp_unwrapped.num_envs, env_comp_unwrapped.num_sensor_positions, env_comp_unwrapped.cfg.sensor_dim
+        )
+        env_comp_unwrapped.set_sensor_data(sensor)
+
     for _ in range(num_steps):
         time_indices_step = time_indices.clone()
-        if use_model_sensor:
-            with torch.no_grad():
-                model_obs = env_comp_unwrapped.compute_model_observation(
-                    add_noise=False,
-                    update_history=not args.new_history_update,
-                ).to(device)
-                sensor_data = ppo_runner.alg.policy.model_sensor(model_obs).reshape(
-                    env_comp_unwrapped.num_envs, env_comp_unwrapped.num_sensor_positions, -1
-                )
-            env_comp_unwrapped.set_sensor_data(sensor_data)
-        else:
-            joint_pos = env_comp_unwrapped.robot.data.joint_pos[:, env_comp_unwrapped.motion_joint_ids]
-            joint_vel = env_comp_unwrapped.robot.data.joint_vel[:, env_comp_unwrapped.motion_joint_ids]
-            sensor = torch.cat([joint_pos, joint_vel * env_comp_unwrapped.step_dt], dim=1)
-            if env_comp_unwrapped.cfg.delta_sensor_value:
-                prev = torch.cat([prev_joint_pos, prev_joint_vel * env_comp_unwrapped.step_dt], dim=1)
-                sensor = sensor - prev
-            sensor = sensor.view(
-                env_comp_unwrapped.num_envs, env_comp_unwrapped.num_sensor_positions, env_comp_unwrapped.cfg.sensor_dim
-            )
-            env_comp_unwrapped.set_sensor_data(sensor)
+
+        # Sensor is already up-to-date (set either by the pre-loop initialisation
+        # above or by the post-step update at the end of the previous iteration).
+        # Do NOT recompute here – that would overwrite with the wrong (already
+        # history-updated) sensor and break alignment with training.
 
         with torch.no_grad():
             obs_dict = env_comp_unwrapped.compute_operator_observation()
@@ -414,9 +429,31 @@ def main() -> int:
             actions, motion_coords=(motion_indices, time_indices_step)
         )
 
-        if use_model_sensor and args.new_history_update:
+        # Post-step: update history AND compute + store sensor for the NEXT step.
+        # This exactly mirrors operator_runner.py's inner loop:
+        #   model_obs = [jp_post, h_BEFORE_update] → sensor, then h is updated.
+        if use_model_sensor:
             with torch.no_grad():
-                env_comp_unwrapped.compute_model_observation(add_noise=False, update_history=True)
+                _model_obs_post = env_comp_unwrapped.compute_model_observation(
+                    add_noise=False, update_history=True
+                ).to(device)
+                _sensor_post = ppo_runner.alg.policy.model_sensor(_model_obs_post).reshape(
+                    env_comp_unwrapped.num_envs, env_comp_unwrapped.num_sensor_positions, -1
+                )
+            env_comp_unwrapped.set_sensor_data(_sensor_post)
+        else:
+            prev_joint_pos = env_comp_unwrapped.robot.data.joint_pos[:, env_comp_unwrapped.motion_joint_ids].clone()
+            prev_joint_vel = env_comp_unwrapped.robot.data.joint_vel[:, env_comp_unwrapped.motion_joint_ids].clone()
+            joint_pos = prev_joint_pos
+            joint_vel = prev_joint_vel
+            sensor = torch.cat([joint_pos, joint_vel * env_comp_unwrapped.step_dt], dim=1)
+            if env_comp_unwrapped.cfg.delta_sensor_value:
+                prev = torch.cat([prev_joint_pos, prev_joint_vel * env_comp_unwrapped.step_dt], dim=1)
+                sensor = sensor - prev
+            sensor = sensor.view(
+                env_comp_unwrapped.num_envs, env_comp_unwrapped.num_sensor_positions, env_comp_unwrapped.cfg.sensor_dim
+            )
+            env_comp_unwrapped.set_sensor_data(sensor)
 
         motion_indices = env_comp_unwrapped.motion_indices.clone()
         time_indices = env_comp_unwrapped.time_indices.clone()
