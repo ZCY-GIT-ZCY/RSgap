@@ -32,15 +32,17 @@ except ImportError:
 
 
 def _sync_to_motion(env_unwrapped, motion_indices: torch.Tensor, time_indices: torch.Tensor) -> None:
+    # Use real joint velocities (not zeros) and do NOT step the simulator, exactly
+    # matching sample_all_environments() so that the initial physics state seen by
+    # the policy is drawn from the same distribution as during training.
     motion_pos = env_unwrapped._motion_loader.dof_positions[motion_indices, time_indices]
-    motion_vel = torch.zeros_like(motion_pos)
+    motion_vel = env_unwrapped._motion_loader.dof_velocities[motion_indices, time_indices]
     env_unwrapped.robot.write_joint_state_to_sim(
         motion_pos, motion_vel, joint_ids=env_unwrapped.motion_joint_ids
     )
     env_unwrapped.robot.set_joint_position_target(
         motion_pos, joint_ids=env_unwrapped.motion_joint_ids
     )
-    env_unwrapped._raw_step_simulator()
 
 
 def _update_sensor_data_from_sim(env_unwrapped) -> None:
@@ -52,6 +54,15 @@ def _update_sensor_data_from_sim(env_unwrapped) -> None:
 
 
 def _load_runner_checkpoint(ppo_runner, resume_path: str, load_optimizer: bool = False) -> None:
+    """Load checkpoint into an OperatorRunner.
+
+    OperatorRunner.__init__() ends with ``policy.model = self.sensor_model``
+    (line 68 of operator_runner.py), so by the time this function is called,
+    policy.model and sensor_model are the SAME object.  Therefore a plain
+    load_state_dict(strict=False) on policy correctly populates both the
+    policy weights AND the sensor-model weights (via the "model.*" keys),
+    and policy.model_sensor() keeps working afterwards.
+    """
     checkpoint = None
     try:
         checkpoint = torch.load(resume_path, map_location="cpu")
@@ -278,6 +289,9 @@ def main() -> int:
     # -------------------------------------------------------------------------
     env = gym.make(args.task, cfg=env_cfg, render_mode=None)
     env_unwrapped = env.unwrapped
+    # Disable noise for evaluation so results are deterministic and not
+    # artificially inflated by training-time observation noise.
+    env_unwrapped.add_noise = False
     device = env_unwrapped.device
     num_actions = env_unwrapped.cfg.action_space
 
@@ -294,6 +308,30 @@ def main() -> int:
     time_indices = torch.full((args.num_envs,), args.time_index, dtype=torch.long, device=device)
 
     _sync_to_motion(env_unwrapped, motion_indices, time_indices)
+
+    # Initialize sensor for baseline loop (matching training initialization)
+    # This is critical: baseline loop must initialize sensor the same way as compensation loop
+    env_unwrapped.motion_indices[:] = motion_indices
+    env_unwrapped.time_indices[:] = time_indices
+    env_unwrapped.last_delta_action[:] = 0
+    if hasattr(env_unwrapped, "model_history"):
+        env_unwrapped.model_history[:] = 0
+
+    # Initialize payload from motion_loader (matching _reset_idx behavior)
+    if env_unwrapped._motion_loader.hand_marker is None:
+        env_unwrapped.wrist_payload_mass[:] = env_unwrapped._motion_loader.payload_sequence[motion_indices] + 0.001
+    else:
+        env_unwrapped.wrist_payload_mass[:] = 0.001
+    env_unwrapped._set_wrist_payload_mass()
+
+    # Initialize sensor from current sim state (no model prediction)
+    joint_pos = env_unwrapped.robot.data.joint_pos[:, env_unwrapped.motion_joint_ids]
+    joint_vel = env_unwrapped.robot.data.joint_vel[:, env_unwrapped.motion_joint_ids]
+    sensor = torch.cat([joint_pos, joint_vel * env_unwrapped.step_dt], dim=1)
+    sensor = sensor.view(
+        env_unwrapped.num_envs, env_unwrapped.num_sensor_positions, env_unwrapped.cfg.sensor_dim
+    )
+    env_unwrapped.set_sensor_data(sensor)
 
     zero_action = torch.zeros((args.num_envs, num_actions), device=device)
     sim_baseline_traj = []
@@ -312,6 +350,15 @@ def main() -> int:
 
         sim_baseline_traj.append(sim_pos[0])
         real_traj.append(real_pos[0])
+
+        # Update sensor after step (matching compensation loop behavior)
+        joint_pos = env_unwrapped.robot.data.joint_pos[:, env_unwrapped.motion_joint_ids]
+        joint_vel = env_unwrapped.robot.data.joint_vel[:, env_unwrapped.motion_joint_ids]
+        sensor = torch.cat([joint_pos, joint_vel * env_unwrapped.step_dt], dim=1)
+        sensor = sensor.view(
+            env_unwrapped.num_envs, env_unwrapped.num_sensor_positions, env_unwrapped.cfg.sensor_dim
+        )
+        env_unwrapped.set_sensor_data(sensor)
 
         motion_indices = env_unwrapped.motion_indices.clone()
         time_indices = env_unwrapped.time_indices.clone()
@@ -355,6 +402,7 @@ def main() -> int:
     motion_indices = torch.full((args.num_envs,), args.motion_index, dtype=torch.long, device=device)
     time_indices = torch.full((args.num_envs,), args.time_index, dtype=torch.long, device=device)
 
+    # Re-sync to initial state for compensation loop (baseline loop changes the state)
     _sync_to_motion(env_comp_unwrapped, motion_indices, time_indices)
     env_comp_unwrapped.last_delta_action[:] = 0
     if hasattr(env_comp_unwrapped, "model_history"):
@@ -404,6 +452,7 @@ def main() -> int:
         )
         env_comp_unwrapped.set_sensor_data(sensor)
 
+    _step_count = 0
     for _ in range(num_steps):
         time_indices_step = time_indices.clone()
 
@@ -425,9 +474,25 @@ def main() -> int:
         target_pos = dof_target_pos.detach().cpu().numpy()
         target_delta_pos = apply_action.detach().cpu().numpy()
 
-        _, _, dones, _ = env_comp_unwrapped.step_operator(
+        _, _, dones, infos = env_comp_unwrapped.step_operator(
             actions, motion_coords=(motion_indices, time_indices_step)
         )
+
+        # --- per-step error diagnostics ---
+        if "episode" in infos and "Train/max_abs_pos_err" in infos["episode"]:
+            max_err_rad = infos["episode"]["Train/max_abs_pos_err"].item()
+            max_err_deg = np.rad2deg(max_err_rad)
+            if max_err_deg > 5.0:
+                mean_err_deg = np.rad2deg(infos["episode"]["Train/mean_abs_pos_err"].item())
+                act_norm = actions.abs().max().item()
+                sensor_norm = env_comp_unwrapped.sensor_data.abs().max().item()
+                hist_norm = env_comp_unwrapped.model_history.abs().max().item() if hasattr(env_comp_unwrapped, "model_history") else float("nan")
+                print(
+                    f"[DIAG] step={_step_count:4d}  t={int(time_indices_step[0])}  "
+                    f"max_err={max_err_deg:.2f}°  mean_err={mean_err_deg:.2f}°  "
+                    f"act_max={act_norm:.4f}  sensor_max={sensor_norm:.4f}  hist_max={hist_norm:.4f}"
+                )
+        _step_count += 1
 
         # Post-step: update history AND compute + store sensor for the NEXT step.
         # This exactly mirrors operator_runner.py's inner loop:
