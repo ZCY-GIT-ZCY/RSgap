@@ -91,11 +91,19 @@ from datetime import datetime
 import sim2real.tasks.humanoid_operator
 import sim2real.tasks.humanoid_agibot
 from sim2real.rsl_rl.modules import DeepONetActorCritic
+from sim2real.rsl_rl.runners import OperatorRunner, OperatorVanillaRunner
 import rsl_rl.runners.on_policy_runner as on_policy_runner
 
 # Make DeepONetActorCritic discoverable by rsl_rl eval()
 on_policy_runner.DeepONetActorCritic = DeepONetActorCritic
 from rsl_rl.runners import OnPolicyRunner
+
+# Runner class registry
+_RUNNER_REGISTRY = {
+    "OnPolicyRunner": OnPolicyRunner,
+    "OperatorRunner": OperatorRunner,
+    "OperatorVanillaRunner": OperatorVanillaRunner,
+}
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -149,6 +157,10 @@ def _load_checkpoint_compatible(runner: OnPolicyRunner, resume_path: str) -> Non
         obs_norm_state = checkpoint.get("obs_norm_state_dict")
         if obs_norm_state is not None and getattr(runner, "obs_normalizer", None) is not None:
             runner.obs_normalizer.load_state_dict(obs_norm_state, strict=False)
+
+        priv_norm_state = checkpoint.get("privileged_obs_norm_state_dict")
+        if priv_norm_state is not None and getattr(runner, "privileged_obs_normalizer", None) is not None:
+            runner.privileged_obs_normalizer.load_state_dict(priv_norm_state, strict=False)
 
         runner.current_learning_iteration = int(checkpoint.get("iteration", checkpoint.get("iter", 0)))
         print("[INFO] Loaded checkpoint (weights only). Optimizer reset.")
@@ -296,8 +308,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env)
 
-    # create runner from rsl-rl
-    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+    # create runner from rsl-rl, respecting class_name in config
+    runner_class_name = agent_cfg.to_dict().get("class_name", "OnPolicyRunner")
+    runner_class = _RUNNER_REGISTRY.get(runner_class_name, OnPolicyRunner)
+    print(f"[INFO] Using runner class: {runner_class.__name__}")
+    runner = runner_class(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     # write git state to logs
     runner.add_git_repo_to_log(__file__)
     # load the checkpoint

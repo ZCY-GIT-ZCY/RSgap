@@ -84,6 +84,8 @@ class HumanoidOperatorEnv(DirectRLEnv):
         self.step_velocity = torch.zeros((self.num_envs, self.num_dofs), device=self.device)
 
         self.action_l2_coef = getattr(self.cfg, "action_l2_coef", 1.0e-3)
+        self.smoothness_coef = getattr(self.cfg, "smoothness_coef", 0.1)
+        self.smoothness_threshold = getattr(self.cfg, "smoothness_threshold", 4e-1)
 
         self.sub_env_sensor_data = torch.zeros((self.num_sub_environments, self.num_sensor_positions, self.cfg.sensor_dim), device=self.device)
         self.sensor_data = torch.zeros((self.num_envs, self.num_sensor_positions, self.cfg.sensor_dim), device=self.device)
@@ -505,7 +507,7 @@ class HumanoidOperatorEnv(DirectRLEnv):
         return - ((36 / (2 * torch.pi)) ** 2) * self._reward_tracking(
             motion_indices=motion_indices,
             time_indices=time_indices,
-        )
+        ) - self.smoothness_coef * self._reward_delta_smoothness()
     
     def _set_wrist_payload_mass(self):
         set_masses(self.payload1, self.wrist_payload_mass, self.payload1._ALL_INDICES) # type: ignore
@@ -858,8 +860,15 @@ class HumanoidOperatorEnv(DirectRLEnv):
         motion_indices, time_indices = self._motion_loader.sample_indices(self.num_sub_environments, randomize_start=True, min_available_length=min_available_length)
         self.motion_indices[:] = motion_indices.repeat_interleave(self.num_sensor_positions, dim=0)
         self.time_indices[:] = time_indices.repeat_interleave(self.num_sensor_positions, dim=0)
-        self.wrist_payload_mass[:] = self._motion_loader.payload_sequence[self.motion_indices] + 0.001
+        if self._motion_loader.hand_marker is None:
+            self.hand_payload_mass[:] = 0.001
+            self.wrist_payload_mass[:] = self._motion_loader.payload_sequence[self.motion_indices] + 0.001
+        else:
+            self.hand_payload_mass[:] = 0.001
+            self.hand_payload_mass[self._ALL_INDICES, self._motion_loader.hand_marker[self.motion_indices]] = self._motion_loader.payload_sequence[self.motion_indices].view(-1) + 0.001
+            self.wrist_payload_mass[:] = 0.001
         self._set_wrist_payload_mass()
+        self._set_hand_payload_mass()
 
     def sample_all_environments(self, env_ids: torch.Tensor | None = None, min_available_length: int = 1):
         if env_ids is None:
@@ -1009,9 +1018,12 @@ class HumanoidOperatorEnv(DirectRLEnv):
         rewards = rewards * unfinished_motion
         dones = (~unfinished_motion) | gap_done
 
+        # Update last_delta_action BEFORE resetting done envs, so that done envs
+        # start the next episode with last_delta_action=0 (set by _reset_idx), not
+        # with the final action that caused the episode to end.
+        self.last_delta_action[:] = self.delta_action
         self.sample_all_environments(env_ids=self._ALL_INDICES[dones])
 
-        self.last_delta_action[:] = self.delta_action
         return None, rewards, dones, {'episode': {
             'joint_pos_diff': torch.abs(
                 self._motion_loader.dof_positions[self.motion_indices, time_indices_step]
@@ -1143,7 +1155,7 @@ class HumanoidOperatorEnv(DirectRLEnv):
             joint_vel = self.robot.data.joint_vel[::self.num_sensor_positions][:, self.motion_joint_ids].repeat_interleave(self.num_sensor_positions, dim=0)
             self.robot.write_joint_state_to_sim(joint_pos, joint_vel * 0, joint_ids=self.motion_joint_ids)
             if self.cfg.delta_sensor_position:
-                self.robot.set_joint_position_target(self.sensor_positions + joint_pos)
+                self.robot.set_joint_position_target(self.sensor_positions + self.robot.data.joint_pos)
             else:
                 self.robot.set_joint_position_target(self.sensor_positions)
 
@@ -1191,6 +1203,7 @@ class HumanoidOperatorEnv(DirectRLEnv):
         current_action = self.delta_action
 
         reward = (current_action - last_action) ** 2
-        reward = torch.clamp(reward - 4e-1, min=0).sum(dim=1)
-        return reward * (~torch.all(torch.abs(last_action) < 1e-2, dim=1)) * 0
+        reward = torch.clamp(reward - self.smoothness_threshold, min=0).sum(dim=1)
+        # Mask out the very first step of each episode (last_action ≈ 0 means no prev action)
+        return reward * (~torch.all(torch.abs(last_action) < 1e-2, dim=1))
     

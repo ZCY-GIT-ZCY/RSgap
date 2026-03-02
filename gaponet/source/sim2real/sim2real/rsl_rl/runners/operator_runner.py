@@ -142,15 +142,19 @@ class OperatorRunner(OnPolicyRunner):
 
         self.sensor_model.train()
         for epoch in range(self.model_learning_epochs):
+            # Rebuild buffer fresh each epoch so training always uses recent samples
+            epoch_buffer = []
             with torch.inference_mode():
                 for _ in range(self.model_sample_iterations):
                     model_pairs = self.env.compute_model_pairs(add_noise=True)
                     model_inputs = model_pairs["obs"].to(self.device)
                     model_outputs = model_pairs["sensor"].flatten(1, 2).to(self.device)
-                    replay_buffer.append((model_inputs, model_outputs))
-            
+                    epoch_buffer.append((model_inputs, model_outputs))
+
+                # Merge with cross-epoch replay buffer for stability, then limit size
+                replay_buffer = epoch_buffer + replay_buffer
                 if len(replay_buffer) > self.model_replay_buffer_size:
-                    replay_buffer = replay_buffer[-self.model_replay_buffer_size:]
+                    replay_buffer = replay_buffer[:self.model_replay_buffer_size]
 
                 model_inputs, model_outputs = self.sample_model_pairs(replay_buffer, len(replay_buffer))
                 assert model_inputs.shape[0] % self.model_learning_steps == 0
@@ -317,6 +321,9 @@ class OperatorRunner(OnPolicyRunner):
                         self.env.create_function(function_coords, sensor_data, motion_coords)
                     elif not self.full_trajectory_sampling:
                         self.env.sample_all_environments(min_available_length=num_steps_per_function)
+                    # full_trajectory_sampling=True: no env reset here; episodes carry state across
+                    # rollouts. model_history is only cleared per-env when an episode ends inside
+                    # step_operator → sample_all_environments(env_ids=done_ids).
                     
                     if self.model_based_sensor:
                         sensor_data = self.sensor_model(

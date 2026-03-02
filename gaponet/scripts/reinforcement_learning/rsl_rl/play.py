@@ -50,6 +50,7 @@ import time
 import torch
 
 from rsl_rl.runners import OnPolicyRunner
+from sim2real.rsl_rl.runners import OperatorRunner, OperatorVanillaRunner
 
 from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
 from isaaclab.utils.assets import retrieve_file_path
@@ -110,7 +111,15 @@ def main():
 
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
-    ppo_runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+    _RUNNER_REGISTRY = {
+        "OnPolicyRunner": OnPolicyRunner,
+        "OperatorRunner": OperatorRunner,
+        "OperatorVanillaRunner": OperatorVanillaRunner,
+    }
+    runner_class_name = agent_cfg.to_dict().get("class_name", "OnPolicyRunner")
+    runner_class = _RUNNER_REGISTRY.get(runner_class_name, OnPolicyRunner)
+    print(f"[INFO] Using runner class: {runner_class.__name__}")
+    ppo_runner = runner_class(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
     checkpoint = None
     try:
         checkpoint = torch.load(resume_path, map_location="cpu")

@@ -192,6 +192,7 @@ def main() -> int:
     # Import Isaac Sim dependent modules (MUST be after AppLauncher)
     import rsl_rl.runners.on_policy_runner as on_policy_runner
     from rsl_rl.runners import OnPolicyRunner
+    from sim2real.rsl_rl.runners import OperatorRunner, OperatorVanillaRunner
     from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
     from isaaclab_tasks.utils import get_checkpoint_path
     from isaaclab.utils.assets import retrieve_file_path
@@ -347,7 +348,15 @@ def main() -> int:
     env_comp_unwrapped = env_unwrapped
     env_wrapped = RslRlVecEnvWrapper(env)
 
-    ppo_runner = OnPolicyRunner(env_wrapped, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+    _RUNNER_REGISTRY = {
+        "OnPolicyRunner": OnPolicyRunner,
+        "OperatorRunner": OperatorRunner,
+        "OperatorVanillaRunner": OperatorVanillaRunner,
+    }
+    runner_class_name = agent_cfg.to_dict().get("class_name", "OnPolicyRunner")
+    runner_class = _RUNNER_REGISTRY.get(runner_class_name, OnPolicyRunner)
+    print(f"[INFO] Using runner class: {runner_class.__name__}")
+    ppo_runner = runner_class(env_wrapped, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
     _load_runner_checkpoint(ppo_runner, resume_path, load_optimizer=False)
     policy = ppo_runner.get_inference_policy(device=device)
     use_model_sensor = bool(getattr(agent_cfg, "model_based_sensor", False))

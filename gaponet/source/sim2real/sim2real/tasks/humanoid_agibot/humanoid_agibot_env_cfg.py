@@ -49,7 +49,9 @@ class HumanoidOperatorEnvCfg(DirectRLEnvCfg):
     state_space = 0
 
     # action regularization
-    action_l2_coef = 1.0e-2
+    action_l2_coef = 1        # weight on ||delta_action||^2 inside _reward_tracking
+    smoothness_coef = 10            # weight on _reward_delta_smoothness in total reward
+    smoothness_threshold = 4e-1      # dead-zone threshold (rad^2); changes below this are not penalized
 
     early_termination = True
     termination_height = 0.8

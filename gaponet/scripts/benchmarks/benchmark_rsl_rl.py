@@ -70,6 +70,16 @@ from datetime import datetime
 
 from rsl_rl.runners import OnPolicyRunner
 
+try:
+    from sim2real.rsl_rl.runners import OperatorRunner, OperatorVanillaRunner
+    _RUNNER_REGISTRY = {
+        "OnPolicyRunner": OnPolicyRunner,
+        "OperatorRunner": OperatorRunner,
+        "OperatorVanillaRunner": OperatorVanillaRunner,
+    }
+except ImportError:
+    _RUNNER_REGISTRY = {"OnPolicyRunner": OnPolicyRunner}
+
 from isaaclab.envs import DirectMARLEnvCfg, DirectRLEnvCfg, ManagerBasedRLEnvCfg
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_pickle, dump_yaml
@@ -164,7 +174,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     task_startup_time_end = time.perf_counter_ns()
 
     # create runner from rsl-rl
-    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+    runner_class_name = agent_cfg.to_dict().get("class_name", "OnPolicyRunner")
+    runner_class = _RUNNER_REGISTRY.get(runner_class_name, OnPolicyRunner)
+    print(f"[INFO] Using runner class: {runner_class.__name__}")
+    runner = runner_class(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     # write git state to logs
     runner.add_git_repo_to_log(__file__)
     # save resume path before creating a new log_dir
