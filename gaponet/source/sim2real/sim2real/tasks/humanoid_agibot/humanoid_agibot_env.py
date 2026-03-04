@@ -257,12 +257,18 @@ class HumanoidOperatorEnv(DirectRLEnv):
 
     def solve_fk(self, dof_positions: torch.Tensor):
         ret = self.robot_chain.forward_kinematics(dof_positions[:, self.joint_usd_to_fk_chain])
-        eff_names = ["L_hand_base_link", "R_hand_base_link"]
+        eff_names = ["arm_l_end_link", "arm_r_end_link"]  # last arm links; gripper/head excluded from training
 
         trans = []
         for eff in eff_names:
             trans.append(ret[eff].get_matrix()[:, :3, 3])
         return trans
+
+    def _expand_motion_to_full_joints(self, motion_joint_pos: torch.Tensor) -> torch.Tensor:
+        """Expand motion-loader joint positions (14 joints) to full robot joint tensor required by solve_fk."""
+        full = torch.zeros(motion_joint_pos.shape[0], len(self.robot_joint_names), device=self.device)
+        full[:, self.motion_joint_ids] = motion_joint_pos
+        return full
 
     def init_play_environments(self, reload_motion: bool = False):
         self.obs_history = []
@@ -294,6 +300,10 @@ class HumanoidOperatorEnv(DirectRLEnv):
         self.play_data = [[] for _ in range(self.num_envs)]
         # Track how many times each motion has been run
         self.motion_run_counts = torch.zeros(self._motion_loader.motion_num, dtype=torch.long, device=self.device)
+        self.play_done = False  # set True when all motions have min_runs; checked by play.py loop
+        # play_motion_filter: list of motion indices to evaluate; None means all motions
+        if not hasattr(self, 'play_motion_filter'):
+            self.play_motion_filter = None
 
     def _pre_physics_step(self, actions: torch.Tensor): 
         self.actions = actions.clone()    # shape: (num_envs, 10)
@@ -323,13 +333,17 @@ class HumanoidOperatorEnv(DirectRLEnv):
 
         # update time_indices
         self.time_indices += 1
+        # clamp to valid range to avoid out-of-bounds when at the last frame
+        safe_time_indices = torch.min(self.time_indices, self._motion_loader.motion_len[self.motion_indices] - 1)
 
         if self.mode == "play":
             # print("================== sim_dof_positions is not None: ", self._motion_loader.sim_dof_positions is not None, "==================")
             if self._motion_loader.sim_dof_positions is not None:
-                sim_left_hand_pos, sim_right_hand_pos = self.solve_fk(self._motion_loader.sim_dof_positions[self.motion_indices, self.time_indices])
+                sim_left_hand_pos, sim_right_hand_pos = self.solve_fk(
+                    self._expand_motion_to_full_joints(self._motion_loader.sim_dof_positions[self.motion_indices, safe_time_indices]))
             left_hand_pos, right_hand_pos = self.solve_fk(self.robot.data.joint_pos)
-            target_left_hand_pos, target_right_hand_pos = self.solve_fk(self._motion_loader.dof_positions[self.motion_indices, self.time_indices])
+            target_left_hand_pos, target_right_hand_pos = self.solve_fk(
+                self._expand_motion_to_full_joints(self._motion_loader.dof_positions[self.motion_indices, safe_time_indices]))
             for i in range(self.num_envs):
                 if self.cfg.record_sim_mode:
                     self.play_data[i].append({
@@ -338,21 +352,21 @@ class HumanoidOperatorEnv(DirectRLEnv):
                     continue
                 self.play_data[i].append({
                     "delta_joint_pos": self.robot.data.joint_pos[i:i+1, self.motion_joint_ids].clone().cpu().numpy(),
-                    "real_joint_pos": self._motion_loader.dof_positions[self.motion_indices[i:i+1], self.time_indices[i:i+1]][:, self._motion_loader.joint_sequence_index].clone().cpu().numpy(),
-                    "joint_target_pos": self._motion_loader.dof_target_pos[self.motion_indices[i:i+1], self.time_indices[i:i+1]][:, self._motion_loader.joint_sequence_index].clone().cpu().numpy(),
+                    "real_joint_pos": self._motion_loader.dof_positions[self.motion_indices[i:i+1], safe_time_indices[i:i+1]][:, self._motion_loader.joint_sequence_index].clone().cpu().numpy(),
+                    "joint_target_pos": self._motion_loader.dof_target_pos[self.motion_indices[i:i+1], safe_time_indices[i:i+1]][:, self._motion_loader.joint_sequence_index].clone().cpu().numpy(),
                     "joint_pos_diff": self.robot.data.joint_pos[i:i+1, self.motion_joint_ids_wo_wrist].clone().cpu().numpy()
-                        - self._motion_loader.dof_positions[self.motion_indices[i:i+1], self.time_indices[i:i+1]][:, self._motion_loader.joint_sequence_wo_wrist].clone().cpu().numpy(),
+                        - self._motion_loader.dof_positions[self.motion_indices[i:i+1], safe_time_indices[i:i+1]][:, self._motion_loader.joint_sequence_wo_wrist].clone().cpu().numpy(),
                     "payload_mass": self._motion_loader.payload_sequence[self.motion_indices[i:i+1]].clone().cpu().item(),
                     "hand_marker": self._motion_loader.hand_marker[self.motion_indices[i:i+1]].clone().cpu().item() if self._motion_loader.hand_marker is not None else None,
-                    
+
                     "left_hand_pos": left_hand_pos[i:i+1].clone().cpu().numpy(),
                     "right_hand_pos": right_hand_pos[i:i+1].clone().cpu().numpy(),
                     "target_left_hand_pos": target_left_hand_pos[i:i+1].clone().cpu().numpy(),
                     "target_right_hand_pos": target_right_hand_pos[i:i+1].clone().cpu().numpy(),
                 })
                 if self._motion_loader.sim_dof_positions is not None:
-                    self.play_data[i][-1]['sim_joint_pos'] = self._motion_loader.sim_dof_positions[self.motion_indices[i:i+1], self.time_indices[i:i+1]][:, self._motion_loader.joint_sequence_index].clone().cpu().numpy()
-                    self.play_data[i][-1]['sim_joint_pos_diff'] = self._motion_loader.dof_positions[self.motion_indices[i:i+1], self.time_indices[i:i+1]][:, self._motion_loader.joint_sequence_wo_wrist].clone().cpu().numpy() - self._motion_loader.sim_dof_positions[self.motion_indices[i:i+1], self.time_indices[i:i+1]][:, self._motion_loader.joint_sequence_wo_wrist].clone().cpu().numpy()
+                    self.play_data[i][-1]['sim_joint_pos'] = self._motion_loader.sim_dof_positions[self.motion_indices[i:i+1], safe_time_indices[i:i+1]][:, self._motion_loader.joint_sequence_index].clone().cpu().numpy()
+                    self.play_data[i][-1]['sim_joint_pos_diff'] = self._motion_loader.dof_positions[self.motion_indices[i:i+1], safe_time_indices[i:i+1]][:, self._motion_loader.joint_sequence_wo_wrist].clone().cpu().numpy() - self._motion_loader.sim_dof_positions[self.motion_indices[i:i+1], safe_time_indices[i:i+1]][:, self._motion_loader.joint_sequence_wo_wrist].clone().cpu().numpy()
                     self.play_data[i][-1]['sim_left_hand_pos'] = sim_left_hand_pos[i:i+1].clone().cpu().numpy()
                     self.play_data[i][-1]['sim_right_hand_pos'] = sim_right_hand_pos[i:i+1].clone().cpu().numpy()
                 if self._motion_loader.joint_index is not None:
@@ -390,10 +404,12 @@ class HumanoidOperatorEnv(DirectRLEnv):
             # progress print
             counts = {i: self.motion_run_counts[i].item() for i in range(self._motion_loader.motion_num)}
             print("Motion run counts:", counts)
-            # stop when each motion has exactly min_runs (or more, but we'll prevent sampling more)
-            if all(self.motion_run_counts[i].item() >= self.min_runs for i in range(self._motion_loader.motion_num)):
-                self.close()
-                exit()
+            # determine which motions to care about
+            target_motions = list(range(self._motion_loader.motion_num)) if self.play_motion_filter is None else self.play_motion_filter
+            # stop when each target motion has min_runs
+            if all(self.motion_run_counts[i].item() >= self.min_runs for i in target_motions):
+                self.play_done = True
+                return
 
         # Sample motion indices
         # NOTE: In play mode, we ensure each motion runs exactly min_runs times.
@@ -402,12 +418,15 @@ class HumanoidOperatorEnv(DirectRLEnv):
             # Ensure motion_run_counts is initialized
             if not hasattr(self, 'motion_run_counts'):
                 self.motion_run_counts = torch.zeros(self._motion_loader.motion_num, dtype=torch.long, device=self.device)
-            # Get available motions (those that haven't reached min_runs)
-            available_motions = torch.where(self.motion_run_counts < self.min_runs)[0]
+            # build candidate pool: only target motions that haven't reached min_runs
+            target_motions = list(range(self._motion_loader.motion_num)) if self.play_motion_filter is None else self.play_motion_filter
+            target_tensor = torch.tensor(target_motions, dtype=torch.long, device=self.device)
+            under_sampled = target_tensor[self.motion_run_counts[target_tensor] < self.min_runs]
+            available_motions = under_sampled
             if len(available_motions) == 0:
                 # All motions have reached min_runs, should have exited above, but just in case
-                self.close()
-                exit()
+                self.play_done = True
+                return
             
             # Sample from available motions
             num_to_sample = len(env_ids)
@@ -786,7 +805,7 @@ class HumanoidOperatorEnv(DirectRLEnv):
                 f.write("\n".join(combined_lines))
     def close(self):
         super().close()
-        if self.mode == "play":
+        if self.mode == "play" and getattr(self, "play_done", False):
             print("save figures")
             # plot and save
             from .utils.plot_play import plot_joint_positions, plot_joint_velocity, plot_joint_torque, plot_joint_acc
@@ -801,15 +820,18 @@ class HumanoidOperatorEnv(DirectRLEnv):
 
             print(self.play_data_history.keys())
 
-            # validate we have at least min_runs per motion
-            for i in range(self._motion_loader.motion_num):
+            # determine which motions were evaluated
+            target_motions = list(range(self._motion_loader.motion_num)) if getattr(self, 'play_motion_filter', None) is None else self.play_motion_filter
+
+            # validate we have at least min_runs per target motion
+            for i in target_motions:
                 if len(self.play_data_history.get(str(i), [])) < self.min_runs:
                     raise ValueError(f"Motion {i} has only {len(self.play_data_history.get(str(i), []))} runs, expected at least {self.min_runs}")
 
             # save raw sim pose if recording
             if self.cfg.record_sim_mode:
                 all_sim_joint_pos = []
-                for m in range(self._motion_loader.motion_num):
+                for m in target_motions:
                     for seq in self.play_data_history[str(m)]:
                         all_sim_joint_pos.append(np.stack([r["delta_joint_pos"] for r in seq])[:, 0])
                 np.savez(os.path.join(save_path, "all_sim_joint_pos.npz"), all_sim_joint_pos=np.array(all_sim_joint_pos, dtype=object))
@@ -822,7 +844,7 @@ class HumanoidOperatorEnv(DirectRLEnv):
 
             # plots: plot the first run of each motion for brevity
             episode_datas = []
-            for i in range(self._motion_loader.motion_num):
+            for i in target_motions:
                 if str(i) not in self.play_data_history:
                     raise ValueError(f"Motion {i} not found in play_data_history")
                 raw = self.play_data_history[str(i)][0]

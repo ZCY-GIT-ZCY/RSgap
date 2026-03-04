@@ -19,8 +19,7 @@ parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
 parser.add_argument(
-    "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
-)
+    "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations.")
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
@@ -29,6 +28,14 @@ parser.add_argument(
     help="Use the pre-trained checkpoint from Nucleus.",
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
+parser.add_argument(
+    "--motion-indices",
+    type=int,
+    nargs="+",
+    default=None,
+    metavar="N",
+    help="Indices of motions to evaluate (e.g. --motion-indices 0 1 2). Defaults to all motions.",
+)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -59,6 +66,8 @@ from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkp
 
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
 import sim2real
+import sim2real.tasks.humanoid_operator  # noqa: F401 — triggers gym.register
+import sim2real.tasks.humanoid_agibot    # noqa: F401 — triggers gym.register
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path, parse_env_cfg
 
@@ -70,6 +79,10 @@ def main():
         args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
     )
     agent_cfg: RslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
+
+    # set env to play mode so _compute_metrics() is triggered (Gap Range / IQR / MPJAE etc.)
+    if hasattr(env_cfg, "mode"):
+        env_cfg.mode = "play"
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
@@ -89,6 +102,11 @@ def main():
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+
+    # restrict which motions are evaluated
+    if args_cli.motion_indices is not None:
+        env.unwrapped.play_motion_filter = args_cli.motion_indices
+        print(f"[INFO] Evaluating motions: {args_cli.motion_indices}")
 
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv):
@@ -159,18 +177,23 @@ def main():
 
     # export policy to onnx/jit
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
-    export_policy_as_jit(
-        ppo_runner.alg.actor_critic, ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.pt"
-    )
-    export_policy_as_onnx(
-        ppo_runner.alg.actor_critic, normalizer=ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.onnx"
-    )
+    _actor_critic = getattr(ppo_runner.alg, "actor_critic", None) or getattr(ppo_runner.alg, "policy", None)
+    try:
+        export_policy_as_jit(
+            _actor_critic, ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.pt"
+        )
+        export_policy_as_onnx(
+            _actor_critic, normalizer=ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.onnx"
+        )
+    except (AttributeError, Exception) as e:
+        print(f"[INFO] Skipping policy export (not supported for this architecture): {e}")
 
     dt = env.unwrapped.physics_dt
 
     # reset environment
     obs, _ = env.get_observations()
     timestep = 0
+    play_done = False
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()
@@ -180,6 +203,12 @@ def main():
             actions = policy(obs)
             # env stepping
             obs, _, _, _ = env.step(actions)
+
+        # in play mode the env sets play_done=True when all motions have min_runs
+        if getattr(env.unwrapped, "play_done", False):
+            play_done = True
+            break
+
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video
@@ -191,7 +220,7 @@ def main():
         if args_cli.real_time and sleep_time > 0:
             time.sleep(sleep_time)
 
-    # close the simulator
+    # close the simulator (triggers _compute_metrics if play_done)
     env.close()
 
 
