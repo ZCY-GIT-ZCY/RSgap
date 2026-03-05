@@ -33,8 +33,11 @@ import numpy as np
 
 def log_message(message):
     """Format and print log messages with timestamp."""
+    import sys
     current_time = datetime.now().strftime("%H:%M:%S")
-    print(f"[VisGAPO][Log][{current_time}] {message}")
+    msg = f"[VisGAPO][Log][{current_time}] {message}\n"
+    sys.stderr.write(msg)
+    sys.stderr.flush()
 
 
 class GAPONetComparisonVisualizer:
@@ -74,20 +77,27 @@ class GAPONetComparisonVisualizer:
         from assets import get_robot_config
         self.robot_config = get_robot_config(self.robot_name)
         
-        # Get PD gains
+        # Get PD gains (try both key variants used in assets.py)
         self.joint_kp = self.robot_config.get_config_value("joint_kp", None)
-        self.joint_kd = self.robot_config.get_config_value("joint_kd", None)
         if self.joint_kp is None:
-            self.joint_kp = [100.0] * 6
+            self.joint_kp = self.robot_config.get_config_value("default_kp", None)
+        self.joint_kd = self.robot_config.get_config_value("joint_kd", None)
         if self.joint_kd is None:
-            self.joint_kd = [10.0] * 6
-        log_message(f"Using PD gains: Kp={self.joint_kp}, Kd={self.joint_kd}")
+            self.joint_kd = self.robot_config.get_config_value("default_kd", None)
         
-        # Default joint names for SO101
-        self.joint_names = ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"]
-        
-        # Load precomputed data
+        # Load precomputed data first so we know num_dofs
         self._load_precomputed_data()
+
+        # Now expand scalar gains to per-joint arrays
+        if self.joint_kp is None:
+            self.joint_kp = [100.0] * self.num_dofs
+        elif not isinstance(self.joint_kp, list):
+            self.joint_kp = [float(self.joint_kp)] * self.num_dofs
+        if self.joint_kd is None:
+            self.joint_kd = [10.0] * self.num_dofs
+        elif not isinstance(self.joint_kd, list):
+            self.joint_kd = [float(self.joint_kd)] * self.num_dofs
+        log_message(f"Using PD gains: Kp={self.joint_kp}, Kd={self.joint_kd}")
         
         # Setup simulation with 4 robots
         self._setup_simulation()
@@ -108,9 +118,28 @@ class GAPONetComparisonVisualizer:
         self.commands = np.array(data['commands'])
         self.delta_actions = np.array(data['delta_actions'])
         self.real_positions = np.array(data['real_positions'])
+
+        # Preferred joint names from precompute file
+        if 'dof_names' in data:
+            self.joint_names = [str(x) for x in data['dof_names'].tolist()]
+        elif 'joint_names' in data:
+            self.joint_names = [str(x) for x in data['joint_names'].tolist()]
+        else:
+            # Fallback: derive names from robot_name + num_dofs
+            if self.robot_name == "agibot" and self.num_dofs == 14:
+                self.joint_names = [
+                    "arm_l_joint1", "arm_l_joint2", "arm_l_joint3", "arm_l_joint4",
+                    "arm_l_joint5", "arm_l_joint6", "arm_l_joint7",
+                    "arm_r_joint1", "arm_r_joint2", "arm_r_joint3", "arm_r_joint4",
+                    "arm_r_joint5", "arm_r_joint6", "arm_r_joint7",
+                ]
+            else:
+                # Legacy SO101 default
+                self.joint_names = ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"]
         
         log_message(f"Motion index: {self.motion_idx}")
         log_message(f"Loaded {self.num_frames} frames with {self.num_dofs} DOFs")
+        log_message(f"Joint names ({len(self.joint_names)}): {self.joint_names}")
         log_message(f"Delta action range: [{self.delta_actions.min():.4f}, {self.delta_actions.max():.4f}] rad")
         log_message(f"Mean |delta|: {np.abs(self.delta_actions).mean():.4f} rad ({np.rad2deg(np.abs(self.delta_actions).mean()):.2f}°)")
     
@@ -129,6 +158,8 @@ class GAPONetComparisonVisualizer:
         }
         
         self.robot_usd_path = self.robot_config.usd_path
+        # Check if robot uses URDF instead of USD
+        self.robot_urdf_path = self.robot_config.get_config_value("urdf_path", None)
         base_offset = list(self.robot_config.offset)
         
         # Robot positions:
@@ -162,20 +193,115 @@ class GAPONetComparisonVisualizer:
         
         # Add ground plane
         self.world.scene.add_default_ground_plane()
+
+        # If URDF path is provided (no USD), convert URDF -> USD once, then
+        # use the resulting USD for all 4 prims.
+        self._urdf_mode = False
+        if self.robot_urdf_path and not self.robot_usd_path:
+            self._urdf_mode = True
+            import os, tempfile
+            urdf_abs = self.robot_urdf_path
+            if not os.path.isabs(urdf_abs):
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                root_dir = os.path.abspath(os.path.join(script_dir, "..", "..", "..", ".."))
+                urdf_abs = os.path.join(root_dir, self.robot_urdf_path)
+            log_message(f"Converting URDF to USD: {urdf_abs}")
+
+            from isaacsim.asset.importer.urdf import _urdf as omni_urdf
+            urdf_interface = omni_urdf.acquire_urdf_interface()
+
+            import_config = omni_urdf.ImportConfig()
+            import_config.fix_base = True
+            import_config.make_default_prim = False
+            import_config.merge_fixed_joints = False
+            import_config.import_inertia_tensor = True
+            import_config.default_drive_type = omni_urdf.UrdfJointTargetType.JOINT_DRIVE_POSITION
+            import_config.default_drive_strength = 50.0
+            import_config.default_position_drive_damping = 1.0
+
+            self._urdf_dir = os.path.dirname(urdf_abs)
+            self._urdf_filename = os.path.basename(urdf_abs)
+            self._urdf_interface = urdf_interface
+            self._urdf_import_config = import_config
+            self._urdf_parsed = urdf_interface.parse_urdf(
+                self._urdf_dir, self._urdf_filename, import_config
+            )
         
         # Create all 4 robots
         self.robots = {}
+        self._urdf_inner_root = ""
+
         for name, prim_path in self.prim_paths.items():
-            sim_module.create_prim(
-                prim_path=prim_path,
-                prim_type="Xform",
-                usd_path=self.robot_usd_path,
-                translation=positions[name]
-            )
-            log_message(f"Created {name} at {prim_path}")
-            
+            if self._urdf_mode:
+                # Import URDF directly into the live stage.
+                # import_robot with a non-file dest_path imports into current stage.
+                dest = self._urdf_interface.import_robot(
+                    self._urdf_dir,
+                    self._urdf_filename,
+                    self._urdf_parsed,
+                    self._urdf_import_config,
+                    prim_path,   # stage destination path
+                )
+                log_message(f"URDF imported {name} -> dest prim: {dest}")
+                # dest is usually the articulation root, e.g. "/genie"
+                # The robot ends up at prim_path, with the articulation root
+                # as a child.  But import_robot may put it directly at /genie.
+                # Check what actually exists:
+                from pxr import UsdGeom, Gf
+                dest_prim = stage.GetPrimAtPath(dest)
+                prim_at_path = stage.GetPrimAtPath(prim_path)
+
+                if dest_prim.IsValid():
+                    art_prim_path = dest
+                    # If dest is not under prim_path, rename/move
+                    if not dest.startswith(prim_path):
+                        from isaacsim.core.utils.prims import move_prim
+                        # Create the parent Xform
+                        if not prim_at_path.IsValid():
+                            UsdGeom.Xform.Define(stage, prim_path)
+                        target = prim_path + "/" + dest.rsplit("/", 1)[-1]
+                        move_prim(dest, target)
+                        art_prim_path = target
+                        log_message(f"  Moved {dest} -> {target}")
+                elif prim_at_path.IsValid():
+                    # import_robot put it under prim_path
+                    art_prim_path = prim_path
+                    # Check if there are children
+                    children = list(prim_at_path.GetChildren())
+                    if children:
+                        art_prim_path = children[0].GetPath().pathString
+                        log_message(f"  Using child as art root: {art_prim_path}")
+                else:
+                    log_message(f"  WARNING: neither {dest} nor {prim_path} is valid!")
+                    art_prim_path = prim_path  # fallback
+
+                # Detect the inner root name from the first import
+                if not self._urdf_inner_root:
+                    self._urdf_inner_root = art_prim_path[len(prim_path):] if art_prim_path.startswith(prim_path) else ""
+                    log_message(f"URDF inner root: '{self._urdf_inner_root}'")
+
+                # Apply translation
+                translate_prim = stage.GetPrimAtPath(prim_path)
+                if not translate_prim.IsValid():
+                    # Create parent Xform for positioning
+                    UsdGeom.Xform.Define(stage, prim_path)
+                    translate_prim = stage.GetPrimAtPath(prim_path)
+                if translate_prim.IsValid():
+                    xformable = UsdGeom.Xformable(translate_prim)
+                    xformable.ClearXformOpOrder()
+                    xformable.AddTranslateOp().Set(Gf.Vec3d(*positions[name]))
+            else:
+                sim_module.create_prim(
+                    prim_path=prim_path,
+                    prim_type="Xform",
+                    usd_path=self.robot_usd_path,
+                    translation=positions[name]
+                )
+                art_prim_path = prim_path
+            log_message(f"Created {name}, art_root={art_prim_path}")
+
             robot = sim_module.Articulation(
-                prim_paths_expr=prim_path,
+                prim_paths_expr=art_prim_path,
                 name=f"robot_{name}"
             )
             self.world.scene.add(robot)
@@ -189,7 +315,8 @@ class GAPONetComparisonVisualizer:
             fix_root_link=True,
         )
         for prim_path in self.prim_paths.values():
-            sim_module.schemas.modify_articulation_root_properties(prim_path, articulation_props, stage)
+            art_path = prim_path + self._urdf_inner_root if self._urdf_inner_root else prim_path
+            sim_module.schemas.modify_articulation_root_properties(art_path, articulation_props, stage)
         
         # Disable collision between all robots
         self._setup_collision_filtering()
@@ -212,11 +339,29 @@ class GAPONetComparisonVisualizer:
         self.joint_indices = []
         for joint in self.joint_names:
             key = joint.split("/")[-1]
+            # Try exact match first
             try:
                 index = self.robots['sim_nogap'].get_dof_index(dof_name=key)
                 self.joint_indices.append(index)
-            except Exception as e:
-                log_message(f"Warning: Could not find joint '{key}': {e}")
+                continue
+            except Exception:
+                pass
+            # Try suffix match: DOF names from URDF import may have idx## prefix
+            matched = False
+            for i, dof_name in enumerate(all_dof_names):
+                if dof_name.endswith(key) or dof_name.endswith("_" + key):
+                    self.joint_indices.append(i)
+                    matched = True
+                    break
+            if not matched:
+                log_message(f"Warning: Could not find joint '{key}' in available DOFs")
+
+        # Fallback: if names mismatch but DOF count matches, use first num_dofs joints by index.
+        if len(self.joint_indices) == 0 and self.num_dofs <= len(all_dof_names):
+            self.joint_indices = list(range(self.num_dofs))
+            log_message(
+                f"Warning: no joint names matched; fallback to first {self.num_dofs} DOFs by index."
+            )
         self.joint_indices = np.array(self.joint_indices)
         log_message(f"Mapped {len(self.joint_indices)} joints: {self.joint_indices}")
         
@@ -311,8 +456,10 @@ class GAPONetComparisonVisualizer:
         
         log_message(f"Configured PD controllers: Kp={kps}, Kd={kds}")
     
-    def run_visualization(self):
+    def run_visualization(self, max_frames=-1):
         """Run the visualization loop."""
+        if max_frames > 0:
+            self.num_frames = min(self.num_frames, max_frames)
         log_message("Starting GAPONet comparison visualization...")
         log_message(f"Running {self.num_frames} frames...")
         
@@ -432,13 +579,15 @@ class GAPONetComparisonVisualizer:
                 log_message(f"Improvement: {improvement:.1f}%")
         
         log_message("")
-        log_message("Visualization complete! Press Ctrl+C to exit...")
+        log_message("Visualization complete!")
         
-        try:
-            while True:
-                self.world.step(render=True)
-        except KeyboardInterrupt:
-            pass
+        if not self.args.headless:
+            log_message("Press Ctrl+C to exit...")
+            try:
+                while True:
+                    self.world.step(render=True)
+            except KeyboardInterrupt:
+                pass
 
 
 def main():
@@ -452,6 +601,7 @@ def main():
     parser.add_argument("--control-freq", type=int, default=50, help="Control frequency")
     parser.add_argument("--headless", action="store_true", help="Run headless")
     parser.add_argument("--livestream", type=int, default=2, help="Livestream type")
+    parser.add_argument("--max-frames", type=int, default=-1, help="Max frames to run (-1=all)")
 
     args = parser.parse_args()
 
@@ -485,7 +635,7 @@ def main():
 
     # Run visualization
     visualizer = GAPONetComparisonVisualizer(args, sim_module)
-    visualizer.run_visualization()
+    visualizer.run_visualization(max_frames=args.max_frames)
 
     app.close()
 

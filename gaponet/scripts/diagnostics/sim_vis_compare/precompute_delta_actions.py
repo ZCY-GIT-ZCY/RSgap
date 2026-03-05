@@ -209,6 +209,7 @@ def main():
         'motion_idx': motion_idx,
         'num_frames': len(all_delta_actions),
         'num_dofs': num_dofs,
+        'dof_names': np.array(motion_loader.dof_names, dtype=object),
         'commands': np.array(all_commands, dtype=np.float32),
         'delta_actions': np.array(all_delta_actions, dtype=np.float32),
         'real_positions': np.array(all_real_positions, dtype=np.float32),
