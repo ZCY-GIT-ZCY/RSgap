@@ -1,13 +1,12 @@
-# python precompute_delta_actions.py \
-#     --task Isaac-SO101-Operator-Delta-Action \
-#     --model /cpfs/workspace/data/pretrained_models/sim2real/gaponet/logs/rsl_rl/so101_operator/2026-02-02_08-43-39_run_009_nosim_all_v2_1/model_8000.pt \
-#     --motion_file /cpfs/workspace/code/sage_lerobot/gaponet/data/so101/batch_processed_all_nosim_v2/test.npz \
-#     --motion_idx 0 \
-#     --output_file /cpfs/workspace/code/sage_lerobot/gaponet/scripts/sim_vis_gap/precomputed_delta.npz
+#!/usr/bin/env bash
+set -e
 
-python precompute_delta_actions.py \
-    --task Isaac-SO101-Operator-Delta-Action \
-    --model /cpfs/workspace/data/pretrained_models/sim2real/gaponet/logs/rsl_rl/so101_operator/2026-02-09_17-38-24_run_013_nosim_with_random_v1_3/model_51000.pt \
-    --motion_file /cpfs/workspace/code/sage_lerobot/gaponet/data/so101/batch_processed_all_nosim_v2/test.npz \
+ROOT_DIR="$(cd "$(dirname "$0")/../../../.." && pwd)"
+export PYTHONPATH="$ROOT_DIR/gaponet/scripts/reinforcement_learning/rsl_rl:$ROOT_DIR/gaponet/source/sim2real:$ROOT_DIR/gaponet/source/sim2real_assets:${PYTHONPATH:-}"
+
+python "$ROOT_DIR/gaponet/scripts/diagnostics/sim_vis_compare/precompute_delta_actions.py" \
+    --task Isaac-Humanoid-AGIBOT-Delta-Action \
+    --model "$ROOT_DIR/logs/rsl_rl/humanoid_agibot/2026-03-04_20-08-04-nosensormodel/model_6000.pt" \
+    --motion_file "$ROOT_DIR/gaponet/source/sim2real/sim2real/tasks/humanoid_agibot/motions/motion_amass/agibot_g1/motion_agibot.npz" \
     --motion_idx 0 \
-    --output_file /cpfs/workspace/code/sage_lerobot/gaponet/scripts/sim_vis_gap/precomputed_delta_run013_51000step.npz
+    --output_file "$ROOT_DIR/logs/precompute_data/nonesensor.npz"

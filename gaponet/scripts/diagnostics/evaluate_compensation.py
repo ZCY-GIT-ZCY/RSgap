@@ -169,6 +169,13 @@ def main() -> int:
         action="store_true",
         help="Use new model_history timing (update after step; default is legacy timing).",
     )
+    parser.add_argument(
+        "--model-based-sensor",
+        type=str,
+        choices=["auto", "true", "false"],
+        default="auto",
+        help="Override sensor source for compensation phase: auto(from agent cfg), true(use sensor model), false(use raw simulator sensor).",
+    )
 
     # Add RSL-RL args
     if cli_args:
@@ -332,6 +339,10 @@ def main() -> int:
         agent_cfg: RslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args.task, args)
     else:
         agent_cfg = RslRlOnPolicyRunnerCfg(experiment_name="default", run_name="default")
+
+    if args.model_based_sensor != "auto":
+        agent_cfg.model_based_sensor = args.model_based_sensor == "true"
+        print(f"[INFO] Override model_based_sensor={agent_cfg.model_based_sensor}")
 
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
     log_root_path = os.path.abspath(log_root_path)

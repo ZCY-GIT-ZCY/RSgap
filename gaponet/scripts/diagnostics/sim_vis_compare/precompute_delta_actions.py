@@ -58,8 +58,9 @@ from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent  # noqa: E4
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper  # noqa: E402
 from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
 
-# Import extensions to set up environment tasks
-import sim2real.tasks  # noqa: F401, E402
+# Import task modules explicitly to trigger gym.register()
+import sim2real.tasks.humanoid_operator  # noqa: F401, E402
+import sim2real.tasks.humanoid_agibot  # noqa: F401, E402
 
 
 def log_message(message):
@@ -125,14 +126,11 @@ def main():
     # Get the trained policy for inference
     policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
 
-    # Extract neural network module
-    try:
-        policy_nn = ppo_runner.alg.policy
-    except AttributeError:
-        policy_nn = ppo_runner.alg.actor_critic
-
-    if hasattr(policy_nn, "full_forward"):
-        policy = policy_nn.full_forward
+    # NOTE:
+    # Keep using runner-provided inference policy.
+    # Some architectures define full_forward() that expects a dict-like input
+    # (e.g., {"model": ..., "operator": ...}), while env wrappers here provide
+    # flattened tensor observations.
 
     # Get environment info
     unwrapped_env = env.unwrapped
@@ -172,7 +170,9 @@ def main():
         joint_pos = motion_loader.dof_positions[motion_idx, 0]
         joint_vel = motion_loader.dof_velocities[motion_idx, 0]
         unwrapped_env.robot.write_joint_state_to_sim(
-            joint_pos.unsqueeze(0), joint_vel.unsqueeze(0)
+            joint_pos.unsqueeze(0),
+            joint_vel.unsqueeze(0),
+            joint_ids=unwrapped_env.motion_joint_ids,
         )
         
         # Get fresh observation

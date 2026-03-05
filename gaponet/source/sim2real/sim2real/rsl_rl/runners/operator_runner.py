@@ -107,7 +107,12 @@ class OperatorRunner(OnPolicyRunner):
         if self.model_based_sensor:
             assert self.num_steps_per_env % self.num_steps_function == 0
         else:
-            assert self.num_steps_function == self.num_steps_per_env
+            if self.num_steps_function != self.num_steps_per_env:
+                print(
+                    f"[WARN] model_based_sensor=False but num_steps_function={self.num_steps_function} != "
+                    f"num_steps_per_env={self.num_steps_per_env}. Overriding num_steps_function to num_steps_per_env."
+                )
+                self.num_steps_function = self.num_steps_per_env
         self.model_learning_interval = self.cfg["model_learning_interval"]
 
         self.randomize_dynamics = self.cfg["randomize_dynamics"]
@@ -115,6 +120,15 @@ class OperatorRunner(OnPolicyRunner):
         self.full_trajectory_sampling = self.cfg["full_trajectory_sampling"]
 
         self.eval_after_training = self.cfg["eval_after_training"]
+
+        # Some task envs (e.g. AGIBOT) do not implement step_sensor/create_function.
+        # Keep legacy path for humanoid_operator while providing a safe fallback.
+        self.supports_function_sampling = hasattr(self.env, "step_sensor") and hasattr(self.env, "create_function")
+        if (not self.model_based_sensor) and (not self.supports_function_sampling):
+            print(
+                "[WARN] model_based_sensor=False but env has no step_sensor/create_function. "
+                "Falling back to direct sensor update from simulator state."
+            )
 
     def sample_functions_and_sensors(self, replay_buffer):
         samples = zip(*random.sample(replay_buffer, k=self.env.num_sensor_positions))
@@ -136,6 +150,19 @@ class OperatorRunner(OnPolicyRunner):
         samples = zip(*random.sample(replay_buffer, k=batch_size))
         model_inputs, model_outputs = samples
         return torch.cat(model_inputs, dim=0), torch.cat(model_outputs, dim=0)
+
+    def _set_sensor_from_current_state(self, prev_raw_sensor: torch.Tensor | None = None) -> torch.Tensor:
+        """Fallback sensor update for envs without step_sensor/create_function."""
+        joint_pos = self.env.robot.data.joint_pos[:, self.env.motion_joint_ids]
+        joint_vel = self.env.robot.data.joint_vel[:, self.env.motion_joint_ids]
+        raw_sensor = torch.cat([joint_pos, joint_vel * self.env.step_dt], dim=1).view(
+            self.env.num_envs, self.env.num_sensor_positions, self.env.cfg.sensor_dim
+        )
+        sensor_data = raw_sensor
+        if getattr(self.env.cfg, "delta_sensor_value", False) and prev_raw_sensor is not None:
+            sensor_data = raw_sensor - prev_raw_sensor
+        self.env.set_sensor_data(sensor_data)
+        return raw_sensor.detach()
     
     def learn_sensor_model(self):
         replay_buffer = []
@@ -285,7 +312,7 @@ class OperatorRunner(OnPolicyRunner):
         num_sensor_positions = self.env.num_sensor_positions
         num_steps_per_function = self.num_steps_per_env // self.num_steps_function
 
-        if not self.model_based_sensor:
+        if (not self.model_based_sensor) and self.supports_function_sampling:
             with torch.inference_mode():
                 while len(replay_buffer) < num_sensor_positions:
                     for _ in range(num_sensor_positions):
@@ -296,12 +323,13 @@ class OperatorRunner(OnPolicyRunner):
 
         for it in range(start_iter, tot_iter):
             start = time.time()
+            prev_raw_sensor = None
             if (it - start_iter) % self.model_learning_interval == 0 and self.model_based_sensor:
                 self.learn_sensor_model()
                 self.sensor_model.eval()
 
             # Rollout
-            if not self.model_based_sensor or not self.direct_sample_envs:
+            if (not self.model_based_sensor and self.supports_function_sampling) or (self.model_based_sensor and not self.direct_sample_envs):
                 with torch.inference_mode():
                     for _ in range(num_sensor_positions):
                         # sample sensors
@@ -313,14 +341,22 @@ class OperatorRunner(OnPolicyRunner):
 
             with torch.inference_mode():
                 for _ in range(self.num_steps_function):
+                    motion_coords = None
                     if self.randomize_dynamics and self.model_based_sensor:
                         self.env.sample_all_dynamics(sample_payload=not self.full_trajectory_sampling)
 
-                    if not self.model_based_sensor or not self.direct_sample_envs:
-                        function_coords, sensor_data, motion_coords = self.sample_functions_and_sensors(replay_buffer)
-                        self.env.create_function(function_coords, sensor_data, motion_coords)
-                    elif not self.full_trajectory_sampling:
-                        self.env.sample_all_environments(min_available_length=num_steps_per_function)
+                    if not self.model_based_sensor:
+                        if self.supports_function_sampling:
+                            function_coords, sensor_data, motion_coords = self.sample_functions_and_sensors(replay_buffer)
+                            self.env.create_function(function_coords, sensor_data, motion_coords)
+                        elif not self.full_trajectory_sampling:
+                            self.env.sample_all_environments(min_available_length=num_steps_per_function)
+                    else:
+                        if not self.direct_sample_envs:
+                            function_coords, sensor_data, motion_coords = self.sample_functions_and_sensors(replay_buffer)
+                            self.env.create_function(function_coords, sensor_data, motion_coords)
+                        elif not self.full_trajectory_sampling:
+                            self.env.sample_all_environments(min_available_length=num_steps_per_function)
                     # full_trajectory_sampling=True: no env reset here; episodes carry state across
                     # rollouts. model_history is only cleared per-env when an episode ends inside
                     # step_operator → sample_all_environments(env_ids=done_ids).
@@ -330,6 +366,8 @@ class OperatorRunner(OnPolicyRunner):
                             self.env.compute_model_observation(update_history=False).to(self.device)
                         ).reshape(self.env.num_envs, self.env.num_sensor_positions, -1)
                         self.env.set_sensor_data(sensor_data.to(self.env.device))
+                    elif not self.supports_function_sampling:
+                        prev_raw_sensor = self._set_sensor_from_current_state(prev_raw_sensor)
                     
                     if not 'obs' in locals() or not self.full_trajectory_sampling:
                         obs = self.env.compute_operator_observation()
@@ -341,13 +379,17 @@ class OperatorRunner(OnPolicyRunner):
                         # Sample actions
                         actions = self.alg.act(obs, privileged_obs)
                         # Step the environment
-                        obs, rewards, dones, infos = self.env.step_operator(actions.to(self.env.device), # type: ignore
-                                                                            motion_coords if not self.model_based_sensor else None) 
+                        obs, rewards, dones, infos = self.env.step_operator(
+                            actions.to(self.env.device),  # type: ignore
+                            motion_coords if (not self.model_based_sensor and self.supports_function_sampling) else None,
+                        )
                         if self.model_based_sensor:
                             sensor_data = self.sensor_model(
                                 self.env.compute_model_observation(update_history=True).to(self.device)
                             ).reshape(self.env.num_envs, self.env.num_sensor_positions, -1)
                             self.env.set_sensor_data(sensor_data.to(self.env.device))
+                        elif not self.supports_function_sampling:
+                            prev_raw_sensor = self._set_sensor_from_current_state(prev_raw_sensor)
                         observation = self.env.compute_operator_observation()
 
                         # Move to device
