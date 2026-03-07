@@ -11,3 +11,5 @@ wandb/
 __pycache__/
 *.pyc
 pretrain/
+*.npz
+*.mp4

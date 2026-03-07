@@ -176,6 +176,13 @@ def main() -> int:
         default="auto",
         help="Override sensor source for compensation phase: auto(from agent cfg), true(use sensor model), false(use raw simulator sensor).",
     )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["train", "play"],
+        default="play",
+        help="MotionLoader mode: play=use first 10 motions (test set, idx 0-9); train=skip first 10 (idx 10+).",
+    )
 
     # Add RSL-RL args
     if cli_args:
@@ -275,6 +282,8 @@ def main() -> int:
     env_cfg = env_cfg_module.HumanoidOperatorEnvCfg()
     env_cfg.scene.num_envs = args.num_envs
     env_cfg.sim.device = args.device
+    env_cfg.mode = args.mode
+    print(f"[INFO] MotionLoader mode: {args.mode} ({'test set (idx 0-9)' if args.mode == 'play' else 'train set (idx 10+)'})")
 
     if args.motion_file:
         env_cfg.train_motion_file = args.motion_file
@@ -565,6 +574,15 @@ def main() -> int:
             html_fig.update_yaxes(title_text="target (deg)", row=3, col=1)
             html_fig.update_xaxes(title_text="step", row=3, col=1)
             html_fig.write_html(plot_dir / f"{name}_traj_comp.html", include_plotlyjs="cdn")
+
+    # ---- aggregate mean gap summary (all joints, all steps) ----
+    mean_base_deg  = np.mean(np.abs(sim_base_deg  - real_deg))
+    mean_comp_deg  = np.mean(np.abs(sim_comp_deg  - real_deg))
+    improvement    = (mean_base_deg - mean_comp_deg) / mean_base_deg * 100 if mean_base_deg > 0 else 0.0
+    print(f"[SUMMARY] episode={args.motion_index} "
+          f"baseline={mean_base_deg:.4f}deg "
+          f"compensated={mean_comp_deg:.4f}deg "
+          f"improvement={improvement:.2f}%")
 
     print("[INFO] Done.")
 

@@ -12,7 +12,9 @@ export PYTHONPATH="$ROOT_DIR/gaponet/scripts/diagnostics/sim_vis_compare:$ROOT_D
 
 python "$ROOT_DIR/gaponet/scripts/diagnostics/sim_vis_compare/vis_gaponet_comparison.py" \
     --robot-name agibot \
-    --precomputed-file "$ROOT_DIR/logs/precompute_data/nonesensor.npz" \
-    --group-offset 0.8 \
+    --precomputed-file "$ROOT_DIR/logs/precompute_data/nonesensor_43.npz" \
+    --group-offset 2 \
     --livestream 0 \
-    --max-frames -1
+    --max-frames -1  \
+    --save-video \
+    --video-path "$ROOT_DIR/logs/precompute_data/nonesensor_43.mp4"

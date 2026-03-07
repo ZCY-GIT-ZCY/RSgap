@@ -370,7 +370,9 @@ class HumanoidOperatorEnv(DirectRLEnv):
                     self.play_data[i][-1]['sim_left_hand_pos'] = sim_left_hand_pos[i:i+1].clone().cpu().numpy()
                     self.play_data[i][-1]['sim_right_hand_pos'] = sim_right_hand_pos[i:i+1].clone().cpu().numpy()
                 if self._motion_loader.joint_index is not None:
-                    self.play_data[i][-1]['single_joint_index'] = self._motion_loader.joint_index[self.motion_indices[i:i+1]].clone().cpu().numpy()
+                    _midx = self.motion_indices[i].item()
+                    if _midx < self._motion_loader.joint_index.shape[0]:
+                        self.play_data[i][-1]['single_joint_index'] = self._motion_loader.joint_index[self.motion_indices[i:i+1]].clone().cpu().numpy()
 
         # check if need to reset (time_indices exceeds motion_len)
         motion_done = self.time_indices >= self._motion_loader.motion_len[self.motion_indices] - 1

@@ -25,9 +25,11 @@ Usage:
 """
 
 import argparse
+import ctypes
 import os
 from datetime import datetime
 
+import cv2
 import numpy as np
 
 
@@ -60,6 +62,11 @@ class GAPONetComparisonVisualizer:
         self.physics_freq = args.physics_freq
         self.render_freq = args.render_freq
         self.control_freq = args.control_freq
+        self.save_video = args.save_video
+        self.video_path = args.video_path
+        self.video_fps = args.video_fps
+        self.video_writer = None
+        self.viewport_api = None
         
         # Check frequency divisibility
         if self.physics_freq % self.render_freq != 0:
@@ -320,18 +327,26 @@ class GAPONetComparisonVisualizer:
         
         # Disable collision between all robots
         self._setup_collision_filtering()
-        
-        # Set robot colors
-        self._set_robot_color(self.prim_paths['sim_nogap'], color=(0.2, 0.4, 1.0), opacity=1.0)   # Blue
-        self._set_robot_color(self.prim_paths['real_1'], color=(1.0, 0.4, 0.1), opacity=0.6)      # Orange
-        self._set_robot_color(self.prim_paths['sim_withgap'], color=(0.2, 0.8, 0.2), opacity=1.0) # Green
-        self._set_robot_color(self.prim_paths['real_2'], color=(1.0, 0.4, 0.1), opacity=0.6)      # Orange
-        
-        # Initialize physics
+
+        # Initialize physics FIRST — world.reset() may reload USD prims,
+        # so material bindings must be applied AFTER this call.
         self.world.reset()
         for _ in range(5):
             self.world.step(render=False)
-        
+
+        # Set robot colors AFTER physics init so USD stage is stable.
+        # Materials are bound directly on every Mesh prim (per-mesh direct
+        # binding always wins over the robot USD's own referenced bindings).
+        self._set_robot_color(self.prim_paths['sim_nogap'],   color=(0.05, 0.30, 1.00), opacity=1.0,  label="SIM_noGAP")  # vivid blue
+        self._set_robot_color(self.prim_paths['real_1'],      color=(1.00, 0.45, 0.00), opacity=0.55, label="REAL_1")     # vivid orange
+        self._set_robot_color(self.prim_paths['sim_withgap'], color=(0.00, 0.88, 0.18), opacity=1.0,  label="SIM_GAP")    # vivid green
+        self._set_robot_color(self.prim_paths['real_2'],      color=(1.00, 0.45, 0.00), opacity=0.55, label="REAL_2")     # vivid orange
+
+        # Render a few frames so the MDL shaders have time to compile and
+        # show the correct colors in the RTX viewport.
+        for _ in range(20):
+            self.world.step(render=True)
+
         # Get joint indices
         all_dof_names = self.robots['sim_nogap']._dof_names
         log_message(f"Available DOFs: {all_dof_names}")
@@ -419,27 +434,163 @@ class GAPONetComparisonVisualizer:
         except:
             pass
     
-    def _set_robot_color(self, prim_path, color, opacity):
-        """Set robot color and opacity."""
+    def _set_robot_color(self, prim_path, color, opacity, label=""):
+        """Colorize a robot by directly modifying the diffuse color on every
+        material shader that is ALREADY bound to any prim inside the robot subtree.
+
+        This approach is renderer-agnostic and avoids all USD layer composition
+        headaches: instead of trying to override bindings, we just mutate the
+        color input on each existing shader (OmniPBR / UsdPreviewSurface).
+        Works even when the URDF importer creates many per-link materials.
+        """
+        from pxr import UsdShade, UsdGeom, Sdf, Gf
+
+        prim = self.stage.GetPrimAtPath(prim_path)
+        if not prim or not prim.IsValid():
+            log_message(f"[Color] {label}: prim not found at {prim_path}")
+            return
+
+        gf_color = Gf.Vec3f(*color)
+        modified_mats = set()   # track to avoid redundant writes
+        visited_prims = 0
+        mesh_prims = 0
+
+        # ── Pass 1: collect all materials bound to prims in this robot subtree ─
+        def _collect_and_recolor(p):
+            nonlocal visited_prims, mesh_prims
+            visited_prims += 1
+
+            is_geo = p.IsA(UsdGeom.Gprim)   # Mesh, Sphere, Capsule, Cylinder …
+            if is_geo:
+                mesh_prims += 1
+                # Also set displayColor (visible in non-RTX modes)
+                try:
+                    UsdGeom.Gprim(p).GetDisplayColorAttr().Set([gf_color])
+                except Exception:
+                    pass
+
+            # Pull every material the prim may reference (direct + collection)
+            binding_api = UsdShade.MaterialBindingAPI(p)
+            try:
+                mat = binding_api.ComputeBoundMaterial()[0]   # resolves inherited
+            except Exception:
+                mat = None
+            # Also check direct binding (may differ from resolved)
+            try:
+                direct_mat = binding_api.GetDirectBinding().GetMaterial()
+            except Exception:
+                direct_mat = None
+
+            for mat_obj in (mat, direct_mat):
+                if mat_obj is None or not mat_obj.GetPrim().IsValid():
+                    continue
+                mat_path_str = mat_obj.GetPrim().GetPath().pathString
+                if mat_path_str in modified_mats:
+                    continue
+                modified_mats.add(mat_path_str)
+                _recolor_material(mat_obj, mat_path_str)
+
+            for child in p.GetChildren():
+                _collect_and_recolor(child)
+
+        # ── Pass 2: recolor a single material (all its shaders) ─────────────
+        def _recolor_material(mat_obj, mat_path_str):
+            mat_prim = mat_obj.GetPrim()
+            for shader_prim in mat_prim.GetChildren():
+                shader = UsdShade.Shader(shader_prim)
+                if not shader:
+                    continue
+                changed = False
+                for iname in ("diffuse_color_constant",    # OmniPBR MDL
+                              "diffuseColor",               # UsdPreviewSurface
+                              "base_color",                 # other MDL shaders
+                              ):
+                    inp = shader.GetInput(iname)
+                    if inp:
+                        inp.Set(gf_color)
+                        changed = True
+                if opacity < 1.0:
+                    for iname in ("opacity_constant", "opacity"):
+                        inp = shader.GetInput(iname)
+                        if inp:
+                            inp.Set(opacity)
+                            changed = True
+                    for iname in ("enable_opacity",):
+                        inp = shader.GetInput(iname)
+                        if inp:
+                            inp.Set(True)
+                if changed:
+                    log_message(f"[Color] {label}: recolored material {mat_path_str}")
+
+        # ── Run the traversal ────────────────────────────────────────────────
+        _collect_and_recolor(prim)
+
+        log_message(f"[Color] {label}: visited {visited_prims} prims, "
+                    f"{mesh_prims} geo prims, modified {len(modified_mats)} materials")
+
+        if len(modified_mats) == 0:
+            # Fallback: create fresh material & bind with session layer
+            log_message(f"[Color] {label}: no bound materials found — "
+                        f"using session-layer new-material fallback")
+            self._set_robot_color_new_material(prim_path, color, opacity, label)
+
+    def _set_robot_color_new_material(self, prim_path, color, opacity, label=""):
+        """Fallback: create a new OmniPBR+PreviewSurface material and bind it in
+        the session layer on every Gprim in the robot subtree."""
+        from pxr import Usd, UsdShade, UsdGeom, Sdf, Gf
+        gf_color = Gf.Vec3f(*color)
+        session_layer = self.stage.GetSessionLayer()
         try:
-            from pxr import UsdGeom, Gf
-            
-            prim = self.stage.GetPrimAtPath(prim_path)
-            if not prim:
-                return
-            
-            self._set_color_recursive(prim, color, opacity)
-            log_message(f"Set color for {prim_path}: RGB={color}, opacity={opacity}")
+            with Usd.EditContext(self.stage, session_layer):
+                mat_name = prim_path.strip("/").replace("/", "_")
+                mat_path = f"/World/Looks/_{mat_name}"
+                mat = UsdShade.Material.Define(self.stage, mat_path)
+                # UsdPreviewSurface
+                ps = UsdShade.Shader.Define(self.stage, mat_path + "/PS")
+                ps.CreateIdAttr("UsdPreviewSurface")
+                ps.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(gf_color)
+                ps.CreateInput("roughness",    Sdf.ValueTypeNames.Float).Set(0.5)
+                ps.CreateInput("metallic",     Sdf.ValueTypeNames.Float).Set(0.0)
+                if opacity < 1.0:
+                    ps.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(opacity)
+                mat.CreateSurfaceOutput().ConnectToSource(ps.ConnectableAPI(), "surface")
+                # OmniPBR MDL
+                try:
+                    mdl = UsdShade.Shader.Define(self.stage, mat_path + "/MDL")
+                    mdl.SetSourceAsset("OmniPBR.mdl", "mdl")
+                    mdl.SetSourceAssetSubIdentifier("OmniPBR", "mdl")
+                    mdl.CreateInput("diffuse_color_constant", Sdf.ValueTypeNames.Color3f).Set(gf_color)
+                    mdl.CreateInput("reflection_roughness_constant", Sdf.ValueTypeNames.Float).Set(0.4)
+                    if opacity < 1.0:
+                        mdl.CreateInput("enable_opacity",  Sdf.ValueTypeNames.Bool).Set(True)
+                        mdl.CreateInput("opacity_constant",Sdf.ValueTypeNames.Float).Set(opacity)
+                    c = mdl.ConnectableAPI()
+                    mat.CreateSurfaceOutput("mdl").ConnectToSource(c, "out")
+                    mat.CreateDisplacementOutput("mdl").ConnectToSource(c, "out")
+                    mat.CreateVolumeOutput("mdl").ConnectToSource(c, "out")
+                except Exception:
+                    pass
+                # Bind on every Gprim
+                bound = 0
+                prim = self.stage.GetPrimAtPath(prim_path)
+                def _bind(p):
+                    nonlocal bound
+                    if p.IsA(UsdGeom.Gprim):
+                        UsdShade.MaterialBindingAPI.Apply(p).Bind(
+                            mat, UsdShade.Tokens.strongerThanDescendants)
+                        bound += 1
+                    for ch in p.GetChildren():
+                        _bind(ch)
+                _bind(prim)
+                log_message(f"[Color] {label}: new-mat fallback bound to {bound} geo prims")
         except Exception as e:
-            log_message(f"Could not set color for {prim_path}: {e}")
-    
+            log_message(f"[Color] {label}: new-mat fallback FAILED: {e}")
+
     def _set_color_recursive(self, prim, color, opacity):
-        """Recursively set color on all mesh descendants."""
+        """Last-resort displayColor only."""
         from pxr import UsdGeom, Gf
-        if prim.IsA(UsdGeom.Mesh):
-            mesh = UsdGeom.Mesh(prim)
-            mesh.GetDisplayColorAttr().Set([Gf.Vec3f(*color)])
-            mesh.GetDisplayOpacityAttr().Set([opacity])
+        if prim.IsA(UsdGeom.Gprim):
+            UsdGeom.Gprim(prim).GetDisplayColorAttr().Set([Gf.Vec3f(*color)])
         for child in prim.GetChildren():
             self._set_color_recursive(child, color, opacity)
     
@@ -456,6 +607,33 @@ class GAPONetComparisonVisualizer:
         
         log_message(f"Configured PD controllers: Kp={kps}, Kd={kds}")
     
+    def _init_video_writer(self):
+        """Initialize video writer using viewport capture."""
+        import omni.ui
+        video_path = self.video_path
+        if not video_path:
+            os.makedirs("outputs/videos", exist_ok=True)
+            video_path = f"outputs/videos/gaponet_comparison_{self.robot_name}_motion{self.motion_idx}.mp4"
+        os.makedirs(os.path.dirname(os.path.abspath(video_path)), exist_ok=True)
+
+        viewport = omni.ui.Workspace.get_window("Viewport")
+        self.viewport_api = viewport.viewport_api
+        frame_width = self.viewport_api.resolution[0]
+        frame_height = self.viewport_api.resolution[1]
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        self.video_writer = cv2.VideoWriter(video_path, fourcc, float(self.video_fps), (frame_width, frame_height))
+        log_message(f"Video writer initialized: {video_path} ({frame_width}x{frame_height} @ {self.video_fps} fps)")
+
+    def _capture_video_frame(self, *args, **kwargs):
+        """Callback to capture a single video frame from the viewport."""
+        capsule, data_size, width, height = args[0], args[1], args[2], args[3]
+        ptr = ctypes.pythonapi.PyCapsule_GetPointer(capsule, None)
+        buffer = ctypes.string_at(ptr, data_size)
+        raw_array = np.frombuffer(buffer, dtype=np.uint8)
+        image_array = raw_array.reshape((height, width, 4))
+        rgb_image = cv2.cvtColor(image_array[:, :, :3], cv2.COLOR_RGB2BGR)
+        self.video_writer.write(rgb_image)
+
     def run_visualization(self, max_frames=-1):
         """Run the visualization loop."""
         if max_frames > 0:
@@ -508,6 +686,11 @@ class GAPONetComparisonVisualizer:
             
             self.world.step(render=True)
         
+        # Initialize video recording if requested
+        if self.save_video:
+            from omni.kit.viewport.utility import capture_viewport_to_buffer
+            self._init_video_writer()
+
         log_message("Main execution: showing comparison...")
         
         # Track errors
@@ -565,6 +748,10 @@ class GAPONetComparisonVisualizer:
             self.robots['real_2'].set_joint_positions(real_array)
             
             self.world.step(render=True)
+
+            # Capture video frame
+            if self.save_video and self.video_writer is not None:
+                capture_viewport_to_buffer(self.viewport_api, self._capture_video_frame)
         
         # Print summary
         if errors_nogap:
@@ -578,6 +765,11 @@ class GAPONetComparisonVisualizer:
                 improvement = (np.mean(errors_nogap) - np.mean(errors_withgap)) / np.mean(errors_nogap) * 100
                 log_message(f"Improvement: {improvement:.1f}%")
         
+        # Release video writer
+        if self.save_video and self.video_writer is not None:
+            self.video_writer.release()
+            log_message(f"Video saved to: {self.video_path or 'outputs/videos/gaponet_comparison_*.mp4'}")
+
         log_message("")
         log_message("Visualization complete!")
         
@@ -602,6 +794,9 @@ def main():
     parser.add_argument("--headless", action="store_true", help="Run headless")
     parser.add_argument("--livestream", type=int, default=2, help="Livestream type")
     parser.add_argument("--max-frames", type=int, default=-1, help="Max frames to run (-1=all)")
+    parser.add_argument("--save-video", action="store_true", default=False, help="Save video of the visualization")
+    parser.add_argument("--video-path", type=str, default=None, help="Output video file path (default: outputs/videos/gaponet_comparison_<robot>_motion<idx>.mp4)")
+    parser.add_argument("--video-fps", type=int, default=30, help="Video FPS (default: 30)")
 
     args = parser.parse_args()
 

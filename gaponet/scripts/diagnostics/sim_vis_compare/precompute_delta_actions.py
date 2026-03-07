@@ -155,52 +155,108 @@ def main():
     all_real_positions = []
     
     # ========== Single Run: Collect delta actions ==========
-    # Delta actions only depend on the current observation (from motion data),
-    # not on the simulated robot state. So we can collect them in one pass.
+    # Use step_operator (same as evaluate_compensation.py) to ensure frame count
+    # is identical: N frames (0 .. N-1).  env.step() goes through the full
+    # gymnasium pipeline (_get_dones increments time_indices unconditionally and
+    # may trigger early episode resets), which produces N-1 or fewer frames.
     log_message("Collecting delta actions from GAPONet model...")
     
     with torch.inference_mode():
-        obs, _ = env.reset()
-        
-        # Set to specific motion
+        # Initialize environment
+        env.reset()
+
+        # Pin to the requested motion from the start
+        motion_indices = torch.full(
+            (unwrapped_env.num_envs,), motion_idx, dtype=torch.long, device=device
+        )
+        time_indices = torch.zeros(unwrapped_env.num_envs, dtype=torch.long, device=device)
         unwrapped_env.motion_indices[:] = motion_idx
         unwrapped_env.time_indices[:] = 0
-        
-        # Reset robot state to initial position
-        joint_pos = motion_loader.dof_positions[motion_idx, 0]
-        joint_vel = motion_loader.dof_velocities[motion_idx, 0]
+
+        # Reset robot to the first frame of this motion
+        joint_pos_init = motion_loader.dof_positions[motion_idx, 0]
+        joint_vel_init = motion_loader.dof_velocities[motion_idx, 0]
         unwrapped_env.robot.write_joint_state_to_sim(
-            joint_pos.unsqueeze(0),
-            joint_vel.unsqueeze(0),
+            joint_pos_init.unsqueeze(0),
+            joint_vel_init.unsqueeze(0),
             joint_ids=unwrapped_env.motion_joint_ids,
         )
-        
-        # Get fresh observation
-        obs, _ = env.get_observations()
-        
-        for step in range(total_frames - 1):
-            time_idx = unwrapped_env.time_indices[0].item()
-            
-            # Get command and real position directly from motion data
-            # These are ground truth and don't depend on simulation
-            command = motion_loader.dof_target_pos[motion_idx, time_idx].cpu().numpy()
-            real_pos = motion_loader.dof_positions[motion_idx, time_idx].cpu().numpy()
-            
-            # Get delta action from policy based on current observation
-            actions = policy(obs)
+
+        # Initialise history / delta buffers (mirrors evaluate_compensation.py)
+        unwrapped_env.last_delta_action[:] = 0
+        if hasattr(unwrapped_env, 'model_history'):
+            unwrapped_env.model_history[:] = 0
+        prev_joint_pos = unwrapped_env.robot.data.joint_pos[
+            :, unwrapped_env.motion_joint_ids
+        ].clone()
+        prev_joint_vel = unwrapped_env.robot.data.joint_vel[
+            :, unwrapped_env.motion_joint_ids
+        ].clone()
+
+        for step in range(total_frames):
+            time_indices_step = time_indices.clone()
+            t = time_indices_step[0].item()
+
+            # Ground-truth data from motion loader (independent of sim state)
+            command  = motion_loader.dof_target_pos[motion_idx, t].cpu().numpy()
+            real_pos = motion_loader.dof_positions[motion_idx, t].cpu().numpy()
+
+            # ---- Build sensor (model_based_sensor=False) ----
+            joint_pos_now = unwrapped_env.robot.data.joint_pos[
+                :, unwrapped_env.motion_joint_ids
+            ]
+            joint_vel_now = unwrapped_env.robot.data.joint_vel[
+                :, unwrapped_env.motion_joint_ids
+            ]
+            sensor = torch.cat(
+                [joint_pos_now, joint_vel_now * unwrapped_env.step_dt], dim=1
+            )
+            if unwrapped_env.cfg.delta_sensor_value:
+                prev = torch.cat(
+                    [prev_joint_pos, prev_joint_vel * unwrapped_env.step_dt], dim=1
+                )
+                sensor = sensor - prev
+            sensor = sensor.view(
+                unwrapped_env.num_envs,
+                unwrapped_env.num_sensor_positions,
+                unwrapped_env.cfg.sensor_dim,
+            )
+            unwrapped_env.set_sensor_data(sensor)
+
+            # ---- Compute observation and query policy ----
+            obs_dict = unwrapped_env.compute_operator_observation()
+            obs_tensor = torch.cat([obs_dict["branch"], obs_dict["trunk"]], dim=1)
+            actions = policy(obs_tensor)
             delta_action = actions[0].cpu().numpy()
-            
+
             # Store data
             all_commands.append(command.copy())
             all_delta_actions.append(delta_action.copy())
             all_real_positions.append(real_pos.copy())
-            
-            # Step environment to get next observation
-            # Note: The actual sim position here is less important than the delta
-            obs, rewards, dones, extras = env.step(actions)
-            
+
+            # ---- Advance simulation via step_operator (mirrors evaluate_compensation.py) ----
+            _, _, dones, _ = unwrapped_env.step_operator(
+                actions, motion_coords=(motion_indices, time_indices_step)
+            )
+
+            # Update prev state for delta-sensor computation on next step
+            prev_joint_pos = unwrapped_env.robot.data.joint_pos[
+                :, unwrapped_env.motion_joint_ids
+            ].clone()
+            prev_joint_vel = unwrapped_env.robot.data.joint_vel[
+                :, unwrapped_env.motion_joint_ids
+            ].clone()
+
+            # Track time externally (step_operator updates unwrapped_env.time_indices)
+            motion_indices = unwrapped_env.motion_indices.clone()
+            time_indices   = unwrapped_env.time_indices.clone()
+
             if step % 100 == 0:
                 log_message(f"  Frame {step}/{total_frames}")
+
+            if bool(torch.any(dones)):
+                log_message(f"  Motion done at frame {step}, stopping collection.")
+                break
     
     log_message(f"Collected {len(all_delta_actions)} frames")
     
