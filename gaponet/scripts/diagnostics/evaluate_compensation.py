@@ -582,9 +582,12 @@ def main() -> int:
     print(f"[SUMMARY] episode={args.motion_index} "
           f"baseline={mean_base_deg:.4f}deg "
           f"compensated={mean_comp_deg:.4f}deg "
-          f"improvement={improvement:.2f}%")
+          f"improvement={improvement:.2f}%", flush=True)
 
-    print("[INFO] Done.")
+    print("[INFO] Done.", flush=True)
+    import sys as _sys
+    _sys.stdout.flush()
+    _sys.stderr.flush()
 
     env.close()
     simulation_app.close()

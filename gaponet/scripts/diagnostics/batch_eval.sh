@@ -3,11 +3,10 @@
 # Usage:
 #   bash batch_eval.sh                         # episodes 0-9 (default)
 #   bash batch_eval.sh 0 9 /path/to/model.pt
-set -e
 
 # Activate the gapo conda environment (has isaacsim + isaaclab)
 eval "$(conda shell.bash hook)"
-conda activate gapo
+conda activate gapo || { echo "[ERROR] Failed to activate conda env 'gapo'"; exit 1; }
 
 START=${1:-0}
 END=${2:-9}
@@ -31,7 +30,7 @@ for IDX in $(seq "$START" "$END"); do
     echo ""
     echo "----- Episode $IDX -----"
     TMPFILE=$(mktemp)
-    python "$ROOT_DIR/gaponet/scripts/diagnostics/evaluate_compensation.py" \
+    PYTHONUNBUFFERED=1 python -u "$ROOT_DIR/gaponet/scripts/diagnostics/evaluate_compensation.py" \
         --task Isaac-Humanoid-AGIBOT-Delta-Action \
         --motion-index "$IDX" \
         --checkpoint "$CHECKPOINT" \
@@ -42,22 +41,21 @@ for IDX in $(seq "$START" "$END"); do
         2>&1 | tee "$TMPFILE"
     EXIT_CODE=${PIPESTATUS[0]}
 
-    OUTPUT=$(cat "$TMPFILE")
-    rm -f "$TMPFILE"
-
     if [ "$EXIT_CODE" -ne 0 ]; then
         echo "[WARN] Episode $IDX exited with code $EXIT_CODE"
         echo "[SUMMARY] episode=$IDX ERROR: python exited with code $EXIT_CODE" >> "$RESULT_FILE"
+        rm -f "$TMPFILE"
         continue
     fi
 
-    # Extract and save the summary line
-    SUMMARY=$(echo "$OUTPUT" | grep "^\[SUMMARY\]")
+    # Extract and save the summary line directly from file (avoids large-variable / buffering issues)
+    SUMMARY=$(grep "^\[SUMMARY\]" "$TMPFILE")
     if [ -n "$SUMMARY" ]; then
         echo "$SUMMARY" >> "$RESULT_FILE"
     else
         echo "[SUMMARY] episode=$IDX ERROR: no summary line found" >> "$RESULT_FILE"
     fi
+    rm -f "$TMPFILE"
 done
 
 echo ""

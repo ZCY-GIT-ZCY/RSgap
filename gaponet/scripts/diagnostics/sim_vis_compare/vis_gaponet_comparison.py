@@ -1,9 +1,10 @@
 """
 GAPONet 效果对比可视化脚本
 
-显示 4 个机器人并排：
-- Group 1 (左): SIM without GAPONet (蓝色) + REAL (橙色半透明)
-- Group 2 (右): SIM with GAPONet (绿色) + REAL (橙色半透明)
+显示 3 个机器人并排（Y轴排列）：
+- REAL           : 真实机器人轨迹 (珊瑚红，半透明)
+- SIM without GAPONet (青白色)
+- SIM with GAPONet    (金黄色)
 
 可以直观对比 GAPONet 是否减小了 sim-real gap。
 
@@ -44,10 +45,11 @@ def log_message(message):
 
 class GAPONetComparisonVisualizer:
     """
-    Visualize GAPONet comparison with 4 robots:
-    - SIM without GAPONet + REAL (left group)  
-    - SIM with GAPONet + REAL (right group)
-    
+    Visualize GAPONet comparison with 3 robots in a row:
+    - REAL           (coral-red, semi-transparent ghost)
+    - SIM without GAPONet  (icy cyan-white)
+    - SIM with GAPONet     (vivid gold)
+
     Uses precomputed delta actions from precompute_delta_actions.py
     """
 
@@ -106,7 +108,7 @@ class GAPONetComparisonVisualizer:
             self.joint_kd = [float(self.joint_kd)] * self.num_dofs
         log_message(f"Using PD gains: Kp={self.joint_kp}, Kd={self.joint_kd}")
         
-        # Setup simulation with 4 robots
+        # Setup simulation with 3 robots
         self._setup_simulation()
     
     def _load_precomputed_data(self):
@@ -151,17 +153,17 @@ class GAPONetComparisonVisualizer:
         log_message(f"Mean |delta|: {np.abs(self.delta_actions).mean():.4f} rad ({np.rad2deg(np.abs(self.delta_actions).mean()):.2f}°)")
     
     def _setup_simulation(self):
-        """Set up simulation with 4 robots."""
+        """Set up simulation with 3 robots."""
         import omni
         
         sim_module = self.sim_module
         
-        # Robot paths
+        # Robot paths (3 overlapping + 1 standalone REAL on the right)
         self.prim_paths = {
-            'sim_nogap': "/World/Robot_SIM_noGAP",
-            'real_1': "/World/Robot_REAL_1",
+            'sim_nogap':   "/World/Robot_SIM_noGAP",
+            'real_1':      "/World/Robot_REAL",
             'sim_withgap': "/World/Robot_SIM_withGAP",
-            'real_2': "/World/Robot_REAL_2",
+            'real_2':      "/World/Robot_REAL_2",
         }
         
         self.robot_usd_path = self.robot_config.usd_path
@@ -169,14 +171,14 @@ class GAPONetComparisonVisualizer:
         self.robot_urdf_path = self.robot_config.get_config_value("urdf_path", None)
         base_offset = list(self.robot_config.offset)
         
-        # Robot positions:
-        # Group 1 (left, without GAPONet): x = -group_offset/2
-        # Group 2 (right, with GAPONet): x = +group_offset/2
+        # Robot layout: 3 robots overlapping at center + 1 standalone REAL to the right.
+        # "right" = +Y from camera perspective (camera at +X looking toward -X).
+        side_offset = self.group_offset  # default 1.8 m to the right
         positions = {
-            'sim_nogap': [base_offset[0] - self.group_offset/2, base_offset[1], base_offset[2]],
-            'real_1': [base_offset[0] - self.group_offset/2, base_offset[1], base_offset[2]],
-            'sim_withgap': [base_offset[0] + self.group_offset/2, base_offset[1], base_offset[2]],
-            'real_2': [base_offset[0] + self.group_offset/2, base_offset[1], base_offset[2]],
+            'sim_nogap':   list(base_offset),
+            'real_1':      list(base_offset),
+            'sim_withgap': list(base_offset),
+            'real_2':      [base_offset[0], base_offset[1] + side_offset, base_offset[2]],
         }
         
         # Create stage
@@ -200,6 +202,93 @@ class GAPONetComparisonVisualizer:
         
         # Add ground plane
         self.world.scene.add_default_ground_plane()
+        # Paint the ground plane black
+        try:
+            from pxr import UsdShade, Sdf, Gf as _Gf2
+            import omni.usd as _ousd2
+            _s2 = _ousd2.get_context().get_stage()
+            _floor_paths = [
+                "/World/defaultGroundPlane/CollisionMesh",
+                "/World/defaultGroundPlane/CollisionPlane",
+                "/World/defaultGroundPlane",
+            ]
+            _floor_mat = UsdShade.Material.Define(_s2, "/World/FloorBlackMat")
+            _floor_sh  = UsdShade.Shader.Define(_s2, "/World/FloorBlackMat/Shader")
+            _floor_sh.CreateIdAttr("UsdPreviewSurface")
+            _floor_sh.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(_Gf2.Vec3f(0.0, 0.0, 0.0))
+            _floor_sh.CreateInput("roughness",    Sdf.ValueTypeNames.Float).Set(1.0)
+            _floor_sh.CreateInput("metallic",     Sdf.ValueTypeNames.Float).Set(0.0)
+            _floor_mat.CreateSurfaceOutput().ConnectToSource(_floor_sh.ConnectableAPI(), "surface")
+            for _fp in _floor_paths:
+                _fp_prim = _s2.GetPrimAtPath(_fp)
+                if _fp_prim.IsValid():
+                    UsdShade.MaterialBindingAPI.Apply(_fp_prim).Bind(
+                        _floor_mat, UsdShade.Tokens.strongerThanDescendants)
+            # Also walk all children of defaultGroundPlane
+            _gp = _s2.GetPrimAtPath("/World/defaultGroundPlane")
+            if _gp.IsValid():
+                from pxr import Usd, UsdGeom
+                for _p in Usd.PrimRange(_gp):
+                    if _p.IsA(UsdGeom.Gprim) or _p.GetTypeName() == "Mesh":
+                        UsdShade.MaterialBindingAPI.Apply(_p).Bind(
+                            _floor_mat, UsdShade.Tokens.strongerThanDescendants)
+        except Exception as _fe:
+            log_message(f"[Floor] Could not set floor color: {_fe}")
+
+        # ── Scene lighting & background: deep navy blue ──────────────────
+        try:
+            from pxr import UsdLux, Sdf, Gf as _Gf
+            import omni.usd as _ousd
+            _stage = _ousd.get_context().get_stage()
+            # Dome light: deep navy sky
+            dome = UsdLux.DomeLight.Define(_stage, "/World/SceneDomeLight")
+            dome.CreateIntensityAttr(800.0)
+            dome.CreateColorAttr(_Gf.Vec3f(0.04, 0.08, 0.22))   # dark navy
+            # Key fill light: soft cool-white from above-front
+            key = UsdLux.RectLight.Define(_stage, "/World/KeyLight")
+            key.CreateIntensityAttr(6000.0)
+            key.CreateColorAttr(_Gf.Vec3f(0.88, 0.92, 1.00))
+            key.CreateWidthAttr(3.0)
+            key.CreateHeightAttr(2.0)
+            xf = key.GetPrim().GetAttribute("xformOp:translate")
+            from pxr import UsdGeom as _UG
+            xfapi = _UG.XformCommonAPI(key.GetPrim())
+            xfapi.SetTranslate(_Gf.Vec3d(0, -3.5, 4.5))
+            xfapi.SetRotate(_Gf.Vec3f(50, 0, 0))
+            # Background plane (visual sky): large blue quad behind robots
+            bg = _UG.Mesh.Define(_stage, "/World/Background")
+            bg.GetPointsAttr().Set([
+                _Gf.Vec3f(-6, -12, -0.5), _Gf.Vec3f(-6, 12, -0.5),
+                _Gf.Vec3f(-6, 12,  5.5),  _Gf.Vec3f(-6, -12,  5.5),
+            ])
+            bg.GetFaceVertexCountsAttr().Set([4])
+            bg.GetFaceVertexIndicesAttr().Set([0, 1, 2, 3])
+            from pxr import UsdShade as _US, Sdf as _Sdf
+            bg_mat = _US.Material.Define(_stage, "/World/BgMaterial")
+            bg_sh  = _US.Shader.Define(_stage, "/World/BgMaterial/Shader")
+            bg_sh.CreateIdAttr("UsdPreviewSurface")
+            bg_sh.CreateInput("diffuseColor",
+                              _Sdf.ValueTypeNames.Color3f).Set(_Gf.Vec3f(0.0, 0.0, 0.0))
+            bg_sh.CreateInput("roughness", _Sdf.ValueTypeNames.Float).Set(1.0)
+            bg_sh.CreateInput("emissiveColor",
+                              _Sdf.ValueTypeNames.Color3f).Set(_Gf.Vec3f(0.0, 0.0, 0.0))
+            bg_mat.CreateSurfaceOutput().ConnectToSource(bg_sh.ConnectableAPI(), "surface")
+            _US.MaterialBindingAPI.Apply(bg.GetPrim()).Bind(bg_mat)
+        except Exception as _e:
+            log_message(f"[Scene] Lighting setup note: {_e}")
+
+        # ── Camera: face-to-face, looking straight at the robot front ────
+        try:
+            from isaacsim.core.utils.viewports import set_camera_view
+            # eye is directly in front (negative Y = front of robot),
+            # slightly elevated; target is robot center at ~chest height.
+            set_camera_view(
+                eye=np.array([ 3.5, 0.0, 1.2]),
+                target=np.array([0.0, 0.0, 0.8]),
+            )
+            log_message("[Camera] Set to face-to-face position.")
+        except Exception as _ce:
+            log_message(f"[Camera] Could not set camera view: {_ce}")
 
         # If URDF path is provided (no USD), convert URDF -> USD once, then
         # use the resulting USD for all 4 prims.
@@ -225,6 +314,14 @@ class GAPONetComparisonVisualizer:
             import_config.default_drive_type = omni_urdf.UrdfJointTargetType.JOINT_DRIVE_POSITION
             import_config.default_drive_strength = 50.0
             import_config.default_position_drive_damping = 1.0
+            # Disable USD native instancing so that FBX mesh prims land directly
+            # in the stage hierarchy (visible to PrimRange & bindable per-robot).
+            # Without this, all 4 robot instances share a single prototype mesh
+            # and cannot be given independent material colors.
+            try:
+                import_config.create_instanceable_usd = False
+            except AttributeError:
+                pass  # older importer versions may not have this flag
 
             self._urdf_dir = os.path.dirname(urdf_abs)
             self._urdf_filename = os.path.basename(urdf_abs)
@@ -334,18 +431,36 @@ class GAPONetComparisonVisualizer:
         for _ in range(5):
             self.world.step(render=False)
 
-        # Set robot colors AFTER physics init so USD stage is stable.
-        # Materials are bound directly on every Mesh prim (per-mesh direct
-        # binding always wins over the robot USD's own referenced bindings).
-        self._set_robot_color(self.prim_paths['sim_nogap'],   color=(0.05, 0.30, 1.00), opacity=1.0,  label="SIM_noGAP")  # vivid blue
-        self._set_robot_color(self.prim_paths['real_1'],      color=(1.00, 0.45, 0.00), opacity=0.55, label="REAL_1")     # vivid orange
-        self._set_robot_color(self.prim_paths['sim_withgap'], color=(0.00, 0.88, 0.18), opacity=1.0,  label="SIM_GAP")    # vivid green
-        self._set_robot_color(self.prim_paths['real_2'],      color=(1.00, 0.45, 0.00), opacity=0.55, label="REAL_2")     # vivid orange
+        # Save color config so we can reapply after every world.reset()
+        # color_cfg: (prim_path, diffuse_rgb, emissive_rgb, opacity, label)
+        # Palette tuned for deep blue background:
+        #   SIM_noGAP  → bright icy white-cyan  (contrast: luminance)
+        #   SIM_withGAP → vivid golden yellow   (contrast: complementary hue)
+        #   REAL_1/2   → warm coral-red, semi-transparent ghost
+        self._color_cfg = [
+            (self.prim_paths['sim_nogap'],
+             (1.00, 1.00, 1.00), (0.40, 0.40, 0.40), 1.0,  "SIM_noGAP"),   # pure white
+            (self.prim_paths['real_1'],
+             (0.00, 0.30, 1.00), (0.00, 0.10, 0.50), 1.0,  "REAL"),         # pure blue solid
+            (self.prim_paths['sim_withgap'],
+             (1.00, 1.00, 0.00), (0.50, 0.50, 0.00), 1.0,  "SIM_withGAP"), # pure yellow
+            (self.prim_paths['real_2'],
+             (0.00, 0.30, 1.00), (0.00, 0.10, 0.50), 1.0,  "REAL_2"),      # pure blue solid
+        ]
+        # Create fallback custom materials
+        self._create_robot_materials()
+        # Apply colors now: SetInstanceable(False) is called here, which
+        # invalidates the PhysX tensor view (physics.tensors simulationView).
+        self._apply_robot_colors()
 
-        # Render a few frames so the MDL shaders have time to compile and
-        # show the correct colors in the RTX viewport.
-        for _ in range(20):
-            self.world.step(render=True)
+        # world.reset() after de-instancing is MANDATORY: SetInstanceable(False)
+        # rewrites USD collision prims, causing PhysX to invalidate the internal
+        # _physics_view on all Articulation objects.  A second reset() rebuilds it.
+        log_message("Re-initializing physics after de-instancing...")
+        self.world.reset()
+        for _ in range(3):
+            self.world.step(render=False)
+
 
         # Get joint indices
         all_dof_names = self.robots['sim_nogap']._dof_names
@@ -386,8 +501,8 @@ class GAPONetComparisonVisualizer:
         log_message("Simulation setup complete!")
         log_message("")
         log_message("Layout:")
-        log_message("  LEFT GROUP (without GAPONet):  BLUE=SIM, ORANGE=REAL")
-        log_message("  RIGHT GROUP (with GAPONet):    GREEN=SIM, ORANGE=REAL")
+        log_message("  CENTER (overlapping): [WHITE=SIM_noGAP] [BLUE ghost=REAL] [YELLOW=SIM_withGAP]")
+        log_message("  RIGHT (+Y):           [BLUE solid=REAL_2]")
     
     def _setup_collision_filtering(self):
         """Disable collision between all robots."""
@@ -396,10 +511,10 @@ class GAPONetComparisonVisualizer:
             
             # Create collision groups for each robot
             group_paths = {
-                'sim_nogap': "/World/CollisionGroup_SimNoGap",
-                'real_1': "/World/CollisionGroup_Real1",
+                'sim_nogap':   "/World/CollisionGroup_SimNoGap",
+                'real_1':      "/World/CollisionGroup_Real",
                 'sim_withgap': "/World/CollisionGroup_SimWithGap",
-                'real_2': "/World/CollisionGroup_Real2",
+                'real_2':      "/World/CollisionGroup_Real2",
             }
             
             groups = {}
@@ -434,165 +549,236 @@ class GAPONetComparisonVisualizer:
         except:
             pass
     
-    def _set_robot_color(self, prim_path, color, opacity, label=""):
-        """Colorize a robot by directly modifying the diffuse color on every
-        material shader that is ALREADY bound to any prim inside the robot subtree.
+    # ──────────────────────────────────────────────────────────────────────────
+    # Robot colorization
+    # Core strategy: instead of fighting USD material binding composition rules,
+    # we directly mutate the shader inputs on whichever material is ALREADY
+    # bound to each Gprim.  The URDF importer creates OmniPBR materials and
+    # binds them; we just change their diffuse_color_constant in-place.
+    # displayColor is also set as a non-RTX fallback.
+    # ──────────────────────────────────────────────────────────────────────────
 
-        This approach is renderer-agnostic and avoids all USD layer composition
-        headaches: instead of trying to override bindings, we just mutate the
-        color input on each existing shader (OmniPBR / UsdPreviewSurface).
-        Works even when the URDF importer creates many per-link materials.
+    def _create_robot_materials(self):
+        """Create one UsdPreviewSurface material per robot.
+
+        Mirrors sim_dual_runner.py: simple UsdPreviewSurface, one per robot.
         """
-        from pxr import UsdShade, UsdGeom, Sdf, Gf
+        from pxr import UsdShade, Sdf, Gf
+        self._robot_mat_paths = {}
+        self._isaac_materials = {}
 
-        prim = self.stage.GetPrimAtPath(prim_path)
-        if not prim or not prim.IsValid():
-            log_message(f"[Color] {label}: prim not found at {prim_path}")
-            return
+        for prim_path, color, emissive, opacity, label in self._color_cfg:
+            safe = prim_path.strip("/").replace("/", "_")
+            mat_path = f"/World/RobotColors/{safe}"
 
-        gf_color = Gf.Vec3f(*color)
-        modified_mats = set()   # track to avoid redundant writes
-        visited_prims = 0
-        mesh_prims = 0
+            # Remove stale prim if a previous run left one
+            existing = self.stage.GetPrimAtPath(mat_path)
+            if existing.IsValid():
+                self.stage.RemovePrim(mat_path)
 
-        # ── Pass 1: collect all materials bound to prims in this robot subtree ─
-        def _collect_and_recolor(p):
-            nonlocal visited_prims, mesh_prims
-            visited_prims += 1
+            mat = UsdShade.Material.Define(self.stage, mat_path)
+            shader = UsdShade.Shader.Define(self.stage, f"{mat_path}/Shader")
+            shader.CreateIdAttr("UsdPreviewSurface")
+            shader.CreateInput("diffuseColor",
+                               Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*color))
+            shader.CreateInput("roughness",     Sdf.ValueTypeNames.Float).Set(0.6)
+            shader.CreateInput("metallic",      Sdf.ValueTypeNames.Float).Set(0.0)
+            shader.CreateInput("emissiveColor",
+                               Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*emissive))
+            if opacity < 1.0:
+                shader.CreateInput("opacity",
+                                   Sdf.ValueTypeNames.Float).Set(opacity)
+            mat.CreateSurfaceOutput().ConnectToSource(
+                shader.ConnectableAPI(), "surface")
 
-            is_geo = p.IsA(UsdGeom.Gprim)   # Mesh, Sphere, Capsule, Cylinder …
-            if is_geo:
-                mesh_prims += 1
-                # Also set displayColor (visible in non-RTX modes)
-                try:
-                    UsdGeom.Gprim(p).GetDisplayColorAttr().Set([gf_color])
-                except Exception:
-                    pass
+            self._robot_mat_paths[prim_path] = mat_path
+            log_message(f"[Color] {label}: UsdPreviewSurface at {mat_path}")
 
-            # Pull every material the prim may reference (direct + collection)
-            binding_api = UsdShade.MaterialBindingAPI(p)
-            try:
-                mat = binding_api.ComputeBoundMaterial()[0]   # resolves inherited
-            except Exception:
-                mat = None
-            # Also check direct binding (may differ from resolved)
-            try:
-                direct_mat = binding_api.GetDirectBinding().GetMaterial()
-            except Exception:
-                direct_mat = None
+    def _create_robot_materials_usd(self):
+        """Alias kept for call-site compat — delegates to _create_robot_materials."""
+        self._create_robot_materials()
 
-            for mat_obj in (mat, direct_mat):
-                if mat_obj is None or not mat_obj.GetPrim().IsValid():
-                    continue
-                mat_path_str = mat_obj.GetPrim().GetPath().pathString
-                if mat_path_str in modified_mats:
-                    continue
-                modified_mats.add(mat_path_str)
-                _recolor_material(mat_obj, mat_path_str)
+    def _apply_robot_colors(self):
+        """Apply per-robot colors. Mirrors sim_dual_runner.py exactly:
 
-            for child in p.GetChildren():
-                _collect_and_recolor(child)
+        1. SetInstanceable(False) on every instanceable Xform under each robot
+           → makes USD expand shared FBX prototypes into unique per-robot copies
+           → enables independent material binding per robot
+        2. UnbindAllBindings() + Bind(UsdPreviewSurface, strongerThanDescendants)
+           on every Mesh/Gprim prim (now accessible after de-instancing)
+        3. Fallback: same link-path approach as sim_dual_runner._set_robot_ghost()
+        """
+        from pxr import Usd, UsdGeom, UsdShade, Gf, Sdf
 
-        # ── Pass 2: recolor a single material (all its shaders) ─────────────
-        def _recolor_material(mat_obj, mat_path_str):
-            mat_prim = mat_obj.GetPrim()
-            for shader_prim in mat_prim.GetChildren():
-                shader = UsdShade.Shader(shader_prim)
-                if not shader:
-                    continue
-                changed = False
-                for iname in ("diffuse_color_constant",    # OmniPBR MDL
-                              "diffuseColor",               # UsdPreviewSurface
-                              "base_color",                 # other MDL shaders
-                              ):
-                    inp = shader.GetInput(iname)
-                    if inp:
-                        inp.Set(gf_color)
-                        changed = True
-                if opacity < 1.0:
-                    for iname in ("opacity_constant", "opacity"):
-                        inp = shader.GetInput(iname)
-                        if inp:
-                            inp.Set(opacity)
-                            changed = True
-                    for iname in ("enable_opacity",):
-                        inp = shader.GetInput(iname)
-                        if inp:
-                            inp.Set(True)
-                if changed:
-                    log_message(f"[Color] {label}: recolored material {mat_path_str}")
+        first_call = not getattr(self, "_colors_applied_once", False)
+        self._colors_applied_once = True
 
-        # ── Run the traversal ────────────────────────────────────────────────
-        _collect_and_recolor(prim)
+        if not getattr(self, "_robot_mat_paths", None):
+            self._create_robot_materials()
 
-        log_message(f"[Color] {label}: visited {visited_prims} prims, "
-                    f"{mesh_prims} geo prims, modified {len(modified_mats)} materials")
+        # Link names with visual FBX geometry (from agibot_g1.urdf)
+        all_link_names = [
+            "base_link", "body_link1", "body_link2",
+            "head_link1", "head_link2",
+            "arm_l_base_link", "arm_r_base_link",
+            "arm_l_link1", "arm_l_link2", "arm_l_link3",
+            "arm_l_link4", "arm_l_link5", "arm_l_link6", "arm_l_end_link",
+            "arm_r_link1", "arm_r_link2", "arm_r_link3",
+            "arm_r_link4", "arm_r_link5", "arm_r_link6", "arm_r_end_link",
+            "gripper_l_base_link",
+            "gripper_l_inner_link1", "gripper_l_inner_link2",
+            "gripper_l_inner_link3", "gripper_l_inner_link4",
+            "gripper_l_outer_link1", "gripper_l_outer_link2",
+            "gripper_l_outer_link3", "gripper_l_outer_link4",
+            "gripper_r_base_link",
+            "gripper_r_inner_link1", "gripper_r_inner_link2",
+            "gripper_r_inner_link3", "gripper_r_inner_link4",
+            "gripper_r_outer_link1", "gripper_r_outer_link2",
+            "gripper_r_outer_link3", "gripper_r_outer_link4",
+        ]
 
-        if len(modified_mats) == 0:
-            # Fallback: create fresh material & bind with session layer
-            log_message(f"[Color] {label}: no bound materials found — "
-                        f"using session-layer new-material fallback")
-            self._set_robot_color_new_material(prim_path, color, opacity, label)
+        for prim_path, color, emissive, opacity, label in self._color_cfg:
+            mat_path = (self._robot_mat_paths or {}).get(prim_path)
+            if not mat_path:
+                continue
+            mat_prim = self.stage.GetPrimAtPath(mat_path)
+            if not mat_prim.IsValid():
+                continue
+            robot_mat = UsdShade.Material(mat_prim)
 
-    def _set_robot_color_new_material(self, prim_path, color, opacity, label=""):
-        """Fallback: create a new OmniPBR+PreviewSurface material and bind it in
-        the session layer on every Gprim in the robot subtree."""
-        from pxr import Usd, UsdShade, UsdGeom, Sdf, Gf
-        gf_color = Gf.Vec3f(*color)
-        session_layer = self.stage.GetSessionLayer()
-        try:
+            root = self.stage.GetPrimAtPath(prim_path)
+            if not root.IsValid():
+                if first_call:
+                    log_message(f"[Color] {label}: root invalid at {prim_path}")
+                continue
+
+            # ── Step 1: De-instance FBX Xforms (only on first call) ──────
+            # SetInstanceable(False) causes USD to treat this robot's FBX
+            # Xforms as unique — no longer sharing a prototype with other
+            # robots. Exact same effect as UrdfFileCfg(make_instanceable=False)
+            # used in sim_dual_runner.py.
+            # Two-pass: collect first, then modify (safe during PrimRange iter).
+            de_count = 0
+            if first_call:
+                instanceable_prims = [
+                    p for p in Usd.PrimRange(root) if p.IsInstanceable()
+                ]
+                for p in instanceable_prims:
+                    p.SetInstanceable(False)
+                    de_count += 1
+                log_message(f"[Color] {label}: de-instanced {de_count} Xforms")
+
+            session_layer = self.stage.GetSessionLayer()
+            gf_color   = Gf.Vec3f(*color)
+            gf_emissive_top = Gf.Vec3f(*emissive)
+
+            # ── Step 2: Directly overwrite EVERY Shader prim's color ─────
+            # This is the most reliable approach: instead of fighting binding
+            # priority, we directly mutate the color inputs on all Shader
+            # prims found under this robot in the session layer.
+            # Session layer overrides beat ALL sublayer opinions including
+            # FBX-embedded materials — no competition, no flicker.
+            shader_count = 0
             with Usd.EditContext(self.stage, session_layer):
-                mat_name = prim_path.strip("/").replace("/", "_")
-                mat_path = f"/World/Looks/_{mat_name}"
-                mat = UsdShade.Material.Define(self.stage, mat_path)
-                # UsdPreviewSurface
-                ps = UsdShade.Shader.Define(self.stage, mat_path + "/PS")
-                ps.CreateIdAttr("UsdPreviewSurface")
-                ps.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(gf_color)
-                ps.CreateInput("roughness",    Sdf.ValueTypeNames.Float).Set(0.5)
-                ps.CreateInput("metallic",     Sdf.ValueTypeNames.Float).Set(0.0)
-                if opacity < 1.0:
-                    ps.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(opacity)
-                mat.CreateSurfaceOutput().ConnectToSource(ps.ConnectableAPI(), "surface")
-                # OmniPBR MDL
+                for prim in Usd.PrimRange(root):
+                    if not prim.IsA(UsdShade.Shader):
+                        continue
+                    shader = UsdShade.Shader(prim)
+                    gf_emissive = gf_emissive_top
+                    # OmniPBR MDL inputs
+                    for iname, itype, ival in [
+                        ("diffuse_color_constant",
+                         Sdf.ValueTypeNames.Color3f, gf_color),
+                        ("reflection_roughness_constant",
+                         Sdf.ValueTypeNames.Float,   0.6),
+                        ("metallic_constant",
+                         Sdf.ValueTypeNames.Float,   0.0),
+                        ("enable_emission",
+                         Sdf.ValueTypeNames.Bool,    True),
+                        ("emissive_color",
+                         Sdf.ValueTypeNames.Color3f, gf_emissive),
+                        ("emissive_intensity",
+                         Sdf.ValueTypeNames.Float,   3000.0),
+                    ]:
+                        try:
+                            shader.CreateInput(iname, itype).Set(ival)
+                        except Exception:
+                            pass
+                    # UsdPreviewSurface inputs
+                    for iname, itype, ival in [
+                        ("diffuseColor",
+                         Sdf.ValueTypeNames.Color3f, gf_color),
+                        ("emissiveColor",
+                         Sdf.ValueTypeNames.Color3f, gf_emissive),
+                        ("roughness",
+                         Sdf.ValueTypeNames.Float,   0.6),
+                        ("metallic",
+                         Sdf.ValueTypeNames.Float,   0.0),
+                    ]:
+                        try:
+                            shader.CreateInput(iname, itype).Set(ival)
+                        except Exception:
+                            pass
+                    shader_count += 1
+            if first_call:
+                log_message(
+                    f"[Color] {label}: mutated {shader_count} shader prims")
+
+            # ── Step 3: Bind our flat material (belt + suspenders) ────────
+            # This covers any prims that had no pre-existing material bound.
+            bound_count = 0
+            with Usd.EditContext(self.stage, session_layer):
                 try:
-                    mdl = UsdShade.Shader.Define(self.stage, mat_path + "/MDL")
-                    mdl.SetSourceAsset("OmniPBR.mdl", "mdl")
-                    mdl.SetSourceAssetSubIdentifier("OmniPBR", "mdl")
-                    mdl.CreateInput("diffuse_color_constant", Sdf.ValueTypeNames.Color3f).Set(gf_color)
-                    mdl.CreateInput("reflection_roughness_constant", Sdf.ValueTypeNames.Float).Set(0.4)
-                    if opacity < 1.0:
-                        mdl.CreateInput("enable_opacity",  Sdf.ValueTypeNames.Bool).Set(True)
-                        mdl.CreateInput("opacity_constant",Sdf.ValueTypeNames.Float).Set(opacity)
-                    c = mdl.ConnectableAPI()
-                    mat.CreateSurfaceOutput("mdl").ConnectToSource(c, "out")
-                    mat.CreateDisplacementOutput("mdl").ConnectToSource(c, "out")
-                    mat.CreateVolumeOutput("mdl").ConnectToSource(c, "out")
+                    UsdShade.MaterialBindingAPI.Apply(root).Bind(
+                        robot_mat, UsdShade.Tokens.strongerThanDescendants)
                 except Exception:
                     pass
-                # Bind on every Gprim
-                bound = 0
-                prim = self.stage.GetPrimAtPath(prim_path)
-                def _bind(p):
-                    nonlocal bound
-                    if p.IsA(UsdGeom.Gprim):
-                        UsdShade.MaterialBindingAPI.Apply(p).Bind(
-                            mat, UsdShade.Tokens.strongerThanDescendants)
-                        bound += 1
-                    for ch in p.GetChildren():
-                        _bind(ch)
-                _bind(prim)
-                log_message(f"[Color] {label}: new-mat fallback bound to {bound} geo prims")
-        except Exception as e:
-            log_message(f"[Color] {label}: new-mat fallback FAILED: {e}")
+                for prim in Usd.PrimRange(root):
+                    if prim.GetTypeName() == "Mesh" or prim.IsA(UsdGeom.Gprim):
+                        try:
+                            UsdShade.MaterialBindingAPI.Apply(prim).Bind(
+                                robot_mat,
+                                UsdShade.Tokens.strongerThanDescendants)
+                            bound_count += 1
+                        except Exception:
+                            pass
+            if first_call:
+                log_message(
+                    f"[Color] {label}: session-layer bound {bound_count} mesh prims")
+
+            # ── displayColor for non-RTX / preview modes ──────────────────
+            for prim in Usd.PrimRange(root):
+                if prim.IsA(UsdGeom.Gprim):
+                    try:
+                        UsdGeom.Gprim(prim).GetDisplayColorAttr().Set([gf_color])
+                        UsdGeom.Gprim(prim).GetDisplayOpacityAttr().Set([opacity])
+                    except Exception:
+                        pass
+
+
+
+    def _recolor_material(self, mat, gf_color, opacity, label):
+        """(Deprecated — kept for API compat. Colors are now managed via
+        _create_robot_materials / _apply_robot_colors.)"""
+        pass
+
+    def _bind_custom_material(self, prim_path, color, opacity, label, root):
+        """(Deprecated — kept for API compat. Colors are now managed via
+        _create_robot_materials / _apply_robot_colors.)"""
+        pass
+
+    # Keep thin wrappers so call sites in _setup_simulation still compile
+    def _set_robot_color(self, prim_path, color, opacity, label=""):
+        pass  # handled by _create_robot_materials + _apply_robot_colors
 
     def _set_color_recursive(self, prim, color, opacity):
-        """Last-resort displayColor only."""
         from pxr import UsdGeom, Gf
         if prim.IsA(UsdGeom.Gprim):
             UsdGeom.Gprim(prim).GetDisplayColorAttr().Set([Gf.Vec3f(*color)])
         for child in prim.GetChildren():
             self._set_color_recursive(child, color, opacity)
+
+
     
     def _config_controllers(self):
         """Configure PD controllers for SIM robots."""
@@ -644,7 +830,16 @@ class GAPONetComparisonVisualizer:
         # Reset
         self.world.reset()
         self._config_controllers()
-        
+        # Do warm-up render steps FIRST so that FBX visual assets are fully
+        # loaded into the USD stage (FBX references are resolved lazily on
+        # first render).  THEN apply colors so PrimRange actually finds meshes.
+        for _ in range(30):
+            self.world.step(render=True)
+        # Force re-run diagnostic so we can see how many meshes were found
+        # after the warm-up render steps.
+        self._colors_applied_once = False
+        self._apply_robot_colors()
+
         # Buffer phase
         BUFFER_TIME = 2.0
         buffer_steps = int(BUFFER_TIME / self.control_dt)
@@ -683,6 +878,7 @@ class GAPONetComparisonVisualizer:
                 real_array[0, idx] = self.real_positions[0, j]
             self.robots['real_1'].set_joint_positions(real_array)
             self.robots['real_2'].set_joint_positions(real_array)
+
             
             self.world.step(render=True)
         
@@ -746,7 +942,7 @@ class GAPONetComparisonVisualizer:
             # ALWAYS set REAL robot positions before step
             self.robots['real_1'].set_joint_positions(real_array)
             self.robots['real_2'].set_joint_positions(real_array)
-            
+
             self.world.step(render=True)
 
             # Capture video frame
@@ -787,7 +983,7 @@ def main():
     parser.add_argument("--robot-name", type=str, default="so101", help="Robot name")
     parser.add_argument("--precomputed-file", type=str, required=True, 
                         help="Path to precomputed delta actions file (.npz) from precompute_delta_actions.py")
-    parser.add_argument("--group-offset", type=float, default=0.5, help="Offset between the two groups")
+    parser.add_argument("--group-offset", type=float, default=1.8, help="Extra gap between the two groups (m)")
     parser.add_argument("--physics-freq", type=int, default=200, help="Physics frequency")
     parser.add_argument("--render-freq", type=int, default=200, help="Render frequency")
     parser.add_argument("--control-freq", type=int, default=50, help="Control frequency")
